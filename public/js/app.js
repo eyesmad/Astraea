@@ -134,7 +134,7 @@ function renderScam() {
   el.hidden = false;
   const bad = scam.category !== 'none';
   el.className = `scam ${bad ? 'bad' : ''}`;
-  const flags = scam.red_flags.map((f) => `<li><b>${esc(f.tactic.replace(/_/g, ' '))}</b>${f.quote ? ` <q>${esc(f.quote)}</q>` : ''}<br><span class="hint" style="margin:0">${esc(f.why)}</span></li>`).join('');
+  const flags = scam.red_flags.map((f) => `<li><b>${esc(f.tactic?.replace(/_/g, ' '))}</b>${f.quote ? ` <q>${esc(f.quote)}</q>` : ''}<br><span class="hint" style="margin:0">${esc(f?.why)}</span></li>`).join('');
   const acts = scam.recommended_actions.map((a) => `<li>${esc(a)}</li>`).join('');
   el.innerHTML =
     `<h3>Content analysis &middot; ${esc(scam.engine)}</h3>` +
@@ -143,6 +143,8 @@ function renderScam() {
     (flags ? `<ul>${flags}</ul>` : '') +
     (acts ? `<h3 style="margin-top:10px">What to do</h3><ul class="actions">${acts}</ul>` : '') +
     (scam.note ? `<div class="hint">${esc(scam.note)}</div>` : '');
+  if (el.querySelector('ul').children[0].textContent.trim() === '')
+    el.remove();
 }
 
 // ---------- tick ----------
