@@ -1,3 +1,3 @@
-# NohoDihs Winning Hackathon Project Inshallah
+# Astraea Winning Hackathon Project Inshallah
 
 powered by allah
