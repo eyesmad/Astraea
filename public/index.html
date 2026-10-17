@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Astraea</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="stage">
+    <header class="top">
+      <div>
+        <h1>Astraea</h1>
+        <p class="tag">Real-time deepfake and scam-call detector. Proof of concept.</p>
+      </div>
+      <div class="badges">
+        <span class="badge" id="badgeIpqs">Number lookup: demo data</span>
+        <span class="badge" id="badgeLlm">Scam classifier: offline rules</span>
+      </div>
+    </header>
+
+    <section class="card" id="cardCall">
+      <h2>1. The call</h2>
+      <p class="hint">Pick a demo scenario or enter a number. STIR/SHAKEN comes from your carrier or a Twilio webhook; a browser cannot read it, so supply it here.</p>
+      <div class="grid">
+        <label>Demo scenario
+          <select id="scenario"><option value="">Custom number</option></select>
+        </label>
+        <label>Phone number
+          <input id="number" placeholder="+1 305 555 0187" autocomplete="off">
+        </label>
+        <label>Caller claims to be
+          <input id="claimedOrg" placeholder="Your bank, Microsoft, a relative">
+        </label>
+        <label>STIR/SHAKEN attestation
+          <select id="verstat">
+            <option value="">Not provided</option>
+            <option value="TN-Validation-Passed-A">A: verified</option>
+            <option value="TN-Validation-Passed-B">B: partial</option>
+            <option value="TN-Validation-Passed-C">C: gateway</option>
+            <option value="TN-Validation-Failed-C">Failed validation</option>
+            <option value="No-TN-Validation">None</option>
+          </select>
+        </label>
+        <label>Network origin (country code)
+          <input id="originCountry" placeholder="US" maxlength="2">
+        </label>
+        <label>Your location
+          <input id="userLoc" placeholder="Use my location, or type: US / New York">
+        </label>
+      </div>
+      <label class="check"><input type="checkbox" id="claimedLocal"> Caller claims to be local to me</label>
+      <div class="row">
+        <button id="btnCheck" class="primary">Check number</button>
+        <button id="btnGeo">Use my location</button>
+        <button id="btnLatest">Load latest Twilio call</button>
+        <span class="status" id="metaStatus"></span>
+      </div>
+    </section>
+
+    <section class="card" id="cardSource">
+      <h2>2. The video and audio</h2>
+      <p class="hint">Share the meeting window with audio (Meet, Zoom, Teams in a browser tab or window) or use your own camera and microphone to test.</p>
+      <div class="row">
+        <button id="btnScreen" class="primary">Capture meeting window</button>
+        <button id="btnCam">Use webcam and mic</button>
+        <button id="btnStop" disabled>Stop</button>
+        <span class="status" id="srcStatus"></span>
+      </div>
+      <video id="preview" muted playsinline></video>
+    </section>
+
+    <section class="card" id="cardContent">
+      <h2>3. What the caller says</h2>
+      <textarea id="transcript" rows="5" placeholder="Paste or dictate what the caller says. Demo scenarios fill this in."></textarea>
+      <div class="row">
+        <button id="btnClassify" class="primary">Analyze content</button>
+        <button id="btnSpeech">Live transcript (microphone)</button>
+        <span class="status" id="contentStatus"></span>
+      </div>
+    </section>
+
+    <details class="card" id="cardSim">
+      <summary>Demo controls</summary>
+      <p class="hint">Inject signals so the compound marker can be shown without a real deepfake.</p>
+      <div class="row wrap" id="simButtons"></div>
+      <div class="row"><button id="btnReset">Start a new call (reset all)</button></div>
+    </details>
+  </main>
+
+  <aside id="overlay" class="overlay" aria-label="Astraea overlay">
+    <header class="ov-head" id="dragHandle">
+      <span class="brand"><i class="dot"></i>Astraea</span>
+      <span class="ov-actions">
+        <button id="btnPip" title="Pop out over another window">Pop out</button>
+        <button id="btnMin" title="Collapse">&minus;</button>
+      </span>
+    </header>
+    <div class="ov-body">
+      <section class="trust">
+        <svg viewBox="0 0 100 100" class="ring" aria-hidden="true">
+          <circle cx="50" cy="50" r="42" class="ring-bg"/>
+          <circle cx="50" cy="50" r="42" class="ring-fg" id="ringFg" stroke-dasharray="264" stroke-dashoffset="0"/>
+        </svg>
+        <div class="trust-text">
+          <div class="trust-pct" id="trustPct">100</div>
+          <div class="trust-label" id="trustLabel">Waiting for a call</div>
+        </div>
+      </section>
+
+      <div id="alert" class="alert" hidden></div>
+
+      <div id="challengeCard" class="challenge" hidden></div>
+
+      <section id="groups" class="groups"></section>
+
+      <section id="scamCard" class="scam" hidden></section>
+
+      <section class="logsec">
+        <h3>Timeline</h3>
+        <ol id="log" class="log"></ol>
+      </section>
+    </div>
+  </aside>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
