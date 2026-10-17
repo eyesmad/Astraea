@@ -5,8 +5,8 @@
   "main": "server.js",
   "type": "module",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js",
+    "start": "node server.js & ./venv/bin/python3 server/analysis_server.py",
+    "dev": "node --watch server.js & ./venv/bin/python3 server/analysis_server.py",
     "test": "node --test test/",
     "replay": "node tools/replay.js"
   },

@@ -3,11 +3,10 @@ import WebSocket, { WebSocketServer } from 'ws';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 import { analyzeMetadata } from './server/metadata.js';
 import { classify } from './server/scam.js';
 import { SCENARIOS } from './server/scenarios.js';
-import { attachAnalysis } from './server/analysisSocket.js';
-import { sharedVoiceModel, voiceModelEnabled } from './server/voiceModel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -78,11 +77,34 @@ wss.on('connection', (socket) => {
 
 const httpServer = app.listen(port, '127.0.0.1', () => {
   console.log(`Astraea running at http://localhost:${port} (WebSocket on ws://localhost:${wssPort})`);
+  console.log(`Analysis WebSocket proxying to Python on port 3002`);
 });
-attachAnalysis(httpServer, port);
 
-// Loading the weights takes minutes, so start the sidecar at boot rather than during the first call.
-if (voiceModelEnabled()) {
-  console.log('Voice model enabled, loading weights (first run downloads about 1.2 GB)...');
-  sharedVoiceModel().start().then((ok) => console.log(ok ? 'Voice model ready.' : 'Voice model unavailable; using voice heuristics only.'));
-}
+// Proxy /ws/analyze to Python analysis server running on port 3002
+httpServer.on('upgrade', (req, socket, head) => {
+  const { pathname } = new URL(req.url, 'http://x');
+  if (pathname === '/ws/analyze') {
+    const proxy = http.request({
+      port: 3002,
+      host: '127.0.0.1',
+      headers: req.headers,
+      method: req.method,
+      path: req.url
+    });
+    proxy.on('upgrade', (res, proxySocket, proxyHead) => {
+      socket.write(
+        'HTTP/1.1 101 Switching Protocols\r\n' +
+        Object.keys(res.headers).map(k => `${k}: ${res.headers[k]}\r\n`).join('') +
+        '\r\n'
+      );
+      if (proxyHead && proxyHead.length) socket.write(proxyHead);
+      proxySocket.pipe(socket);
+      socket.pipe(proxySocket);
+    });
+    proxy.on('error', (err) => {
+      console.error('Python server proxy error:', err.message);
+      socket.destroy();
+    });
+    req.pipe(proxy);
+  }
+});
