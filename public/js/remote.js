@@ -5,7 +5,7 @@ const SAMPLE_RATE = 32000;
 
 // ?record=genuine or ?record=fake asks the server to save the capture for later replay. Labelled captures
 // are what the thresholds get calibrated against, so the label matters more than the filename.
-function recordLabel() {
+export function recordLabel() {
   const v = new URLSearchParams(location.search).get('record');
   return v === '' ? 'capture' : v;
 }

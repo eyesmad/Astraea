@@ -8,7 +8,7 @@ Real-time deepfake and scam-call detector (proof of concept web app, desktop bro
 
 ```bash
 npm install
-cp .env.example .env   # optional: add IPQS_API_KEY / ANTHROPIC_API_KEY
+cp .env.example .env   # optional: add IPQS_API_KEY / GEMINI_API_KEY
 npm start
 ```
 
@@ -67,7 +67,4 @@ captures contain real faces and voices.
 - Detection thresholds are untuned proof-of-concept values.
 - STIR/SHAKEN cannot be read in a browser; it comes from the Twilio webhook (`POST /api/webhook/twilio`) or the demo scenarios.
 - Speech-to-text only hears the microphone, not the caller.
-- Content classification runs through Gemini when `GEMINI_API_KEY` is set. Since b137f6f that path no longer
-  clamps model output into the result schema, so its `red_flags` are plain strings (the overlay expects
-  `{tactic, quote, why}` and renders them blank), `category` is always `other_scam`, and an API failure
-  returns nothing instead of falling back. The offline keyword classifier is unaffected.
+- Content classification runs through Gemini when `GEMINI_API_KEY` is set, and falls back to the offline keyword classifier otherwise or on an API failure.

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeMetadata, parseVerstat, areaCodeInfo } from '../server/metadata.js';
-import { classifyHeuristic, classify } from '../server/scam.js';
+import { classifyHeuristic, classify, normalizeResult } from '../server/scam.js';
 import { SCENARIOS } from '../server/scenarios.js';
 
 const byId = (r) => Object.fromEntries(r.signals.map((s) => [s.id, s]));
@@ -68,5 +68,50 @@ test('classify falls back offline without an API key and rejects empty input', a
   await assert.rejects(() => classify('  ', '', {}), /empty/i);
 });
 
-// The normalizeResult test was dropped in b137f6f, which removed the function when the model backend moved
-// to Gemini. Model output is no longer clamped into the schema; see the note in the README.
+test('normalizeResult clamps model output into the schema', () => {
+  const r = normalizeResult({ category: 'made_up', confidence: 7, red_flags: [{ tactic: 'urgency' }] }, 'gemini');
+  assert.equal(r.category, 'other_scam');
+  assert.equal(r.confidence, 1);
+  assert.equal(r.red_flags[0].quote, '');
+  assert.equal(r.engine, 'gemini');
+});
+
+test('normalizeResult survives junk', () => {
+  const r = normalizeResult({ confidence: 'abc', red_flags: ['urgency', null], recommended_actions: 'nope' }, 'gemini');
+  assert.equal(r.confidence, 0.5);
+  assert.deepEqual(r.red_flags, [{ tactic: 'urgency', quote: '', why: '' }]);
+  assert.deepEqual(r.recommended_actions, []);
+  assert.equal(normalizeResult(null, 'gemini').category, 'other_scam');
+});
+
+// Regression: classifyWithGemini used to swallow a failed request and return undefined, which made the
+// fallback below unreachable and sent an empty body to the client.
+test('classify falls back to the offline classifier when Gemini fails', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (url) => {
+    calls.push(url);
+    return new Response('upstream exploded', { status: 500 });
+  });
+  const r = await classify('You must buy gift cards right now or you will be arrested.', '', { GEMINI_API_KEY: 'x' });
+  assert.equal(calls.length, 1);
+  assert.equal(r.engine, 'heuristic');
+  assert.match(r.note, /Gemini unavailable/);
+  assert.ok(r.red_flags.length > 0);
+});
+
+test('classify normalizes a successful Gemini response', async (t) => {
+  const body = { category: 'tech_support', confidence: 0.91, summary: 'Caller wants remote access.', red_flags: [{ tactic: 'remote_access', quote: 'install AnyDesk', why: 'Wants control of the device.' }], recommended_actions: ['Hang up.'] };
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(body) }] } }] }), { status: 200 }));
+  const r = await classify('Please install AnyDesk so I can fix your computer.', '', { GEMINI_API_KEY: 'x' });
+  assert.equal(r.engine, 'gemini');
+  assert.equal(r.category, 'tech_support');
+  assert.equal(r.red_flags[0].tactic, 'remote_access');
+  assert.equal(r.note, undefined);
+});
+
+test('classify falls back when Gemini returns no content', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ candidates: [] }), { status: 200 }));
+  const r = await classify('Hello, this is your bank.', '', { GEMINI_API_KEY: 'x' });
+  assert.equal(r.engine, 'heuristic');
+  assert.match(r.note, /no content/);
+});

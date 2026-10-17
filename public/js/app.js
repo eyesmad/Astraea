@@ -3,7 +3,7 @@ import { CompoundDetector, computeTrust, trustLabel } from './compound.js';
 import { VideoMetrics, mouthAperture } from './videoMetrics.js';
 import { AudioAnalyzer } from './audioAnalyzer.js';
 import { CrossModal } from './crossmodal.js';
-import { RemoteAnalysis } from './remote.js';
+import { RemoteAnalysis, recordLabel } from './remote.js';
 import { Vision } from './vision.js';
 import { CHALLENGES, pickChallenge } from './gestures.js';
 
@@ -111,10 +111,12 @@ function render(now) {
   const engine = $('#engine');
   engine.hidden = !stream;
   if (stream) {
-    engine.className = `engine ${remote.active ? '' : 'local'}`;
+    const wanted = recordLabel();
+    const failedToRecord = wanted && !remote.recording;
+    engine.className = `engine ${remote.active && !failedToRecord ? '' : 'local'}`;
     engine.textContent = remote.active
       ? `Analysing on the server${remote.recording ? ' and recording for replay' : ''}`
-      : 'Analysing in this browser';
+      : `Analysing in this browser${failedToRecord ? ' - NOT recording' : ''}`;
   }
   $('#groups').innerHTML = Object.entries(LAYERS).map(([layer, meta]) => {
     const rows = Object.entries(SIGNALS).filter(([, d]) => d.layer === layer).map(([id, def]) => {
@@ -321,7 +323,10 @@ async function startCapture(kind, file = null) {
         remote.stop();
       }
     } else if (stream) {
-      log('Analysis server unreachable; analysing in the browser.');
+      log('Analysis server unreachable; analysing in the browser. Restart the server (npm start) if it predates this page.', 'compound');
+    }
+    if (recordLabel() && !remote.recording) {
+      log('NOT RECORDING: this capture will not be saved, because recording happens on the analysis server.', 'compound');
     }
     if (stream && !remote.active) hasAudio = await audio.start(stream);
     if (!hasAudio) log('No audio track was shared. Voice and lip-sync checks are off. Tick "Share audio" when picking a tab.');
@@ -517,7 +522,7 @@ async function init() {
   $('#badgeIpqs').classList.toggle('on', config.ipqs);
   $('#badgeIpqs').textContent = config.ipqs ? 'Number lookup: IPQualityScore' : 'Number lookup: demo data';
   $('#badgeLlm').classList.toggle('on', config.llm);
-  $('#badgeLlm').textContent = config.llm ? 'Scam classifier: Claude' : 'Scam classifier: offline rules';
+  $('#badgeLlm').textContent = config.llm ? 'Scam classifier: Gemini' : 'Scam classifier: offline rules';
 
   const sel = $('#scenario');
   for (const s of config.scenarios || []) sel.append(new Option(s.label, s.id));
