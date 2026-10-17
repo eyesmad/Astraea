@@ -1,6 +1,6 @@
-# Astraea Winning Hackathon Project Inshallah
+# Astraea Winning Hackathon Project
 
-astraea AI, powered by allah
+astraea AI
 
 Real-time deepfake and scam-call detector (proof of concept web app, desktop browser).
 
@@ -111,5 +111,3 @@ captures contain real faces and voices.
 - Learning the lip-sync baseline assumes the first several seconds of a call are honest. A fake that is
   desynchronised from the very first frame is only caught once its offset exceeds the gross limit.
 - STIR/SHAKEN cannot be read in a browser; it comes from the Twilio webhook (`POST /api/webhook/twilio`) or the demo scenarios.
-- Speech-to-text only hears the microphone, not the caller.
-- Content classification runs through Gemini when `GEMINI_API_KEY` is set, and falls back to the offline keyword classifier otherwise or on an API failure.
