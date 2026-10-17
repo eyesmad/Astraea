@@ -195,7 +195,7 @@ async def handler(websocket):
                     continue
                 end_t = struct.unpack("<d", message[:8])[0]
                 samples = np.frombuffer(message[8 : 8 + count * 2], dtype="<i2").astype(np.float32) / 32768.0
-                await asyncio.to_thread(session.push_audio, samples, end_t)
+                session.push_audio(samples, end_t)
                 if recorder:
                     recorder.audio(message)
                 continue

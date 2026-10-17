@@ -275,13 +275,13 @@ class VideoMetrics:
         if len(self.ear_hist) < 20:
             return
         open_level = median([e["v"] for e in self.ear_hist if e["v"] > 0])
-        thr = open_level * 0.72
+        thr = open_level * 0.82
         if ear < thr:
             if self.closed_at is None:
                 self.closed_at = t
         elif self.closed_at is not None:
             d = t - self.closed_at
-            if 40 <= d <= 600:
+            if 30 <= d <= 600:
                 self.blinks.append(self.closed_at)
             self.closed_at = None
 
@@ -554,7 +554,11 @@ class CrossModal:
 
         rng = (max(self.lag_history) - min(self.lag_history)) if len(self.lag_history) >= 5 else 0
         drifting = rng >= self.drift_ms and r["peak"] >= 0.2
-        gross = abs(r["lag_ms"]) >= GROSS_OFFSET_MS and r["peak"] >= 0.25
+        
+        # Audio leading is highly unnatural and visible much earlier (~45ms) than lagging
+        is_gross_lead = r["lag_ms"] <= -45
+        is_gross_lag = r["lag_ms"] >= GROSS_OFFSET_MS
+        gross = (is_gross_lead or is_gross_lag) and r["peak"] >= 0.25
 
         out = []
         if self.baseline is None and not gross:
