@@ -58,10 +58,8 @@ button.primary {
 
 /* Main page */
 .stage {
-  max-width: 720px;
-  margin: 0 auto;
+  margin: 0 420px;
   padding: 28px 20px 80px;
-  margin-right: 420px;
   margin-left: 24px;
 }
 
