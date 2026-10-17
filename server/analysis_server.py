@@ -13,7 +13,7 @@ import struct
 import numpy as np
 import websockets
 
-from analysis import SAMPLE_RATES, AnalysisSession
+from analysis import SAMPLE_RATES
 from analysis.recording import RecordingWriter, recording_path
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
@@ -23,6 +23,118 @@ PORT = 3002
 MAX_CHUNK_SAMPLES = 48000
 TICK_SECONDS = 1.0
 
+import logging
+import time
+
+from analysis_metrics import (
+    spectrum_db, estimate_f0, brickwall_drop, spectral_flatness, rms,
+    unpack_face, mouth_aperture, AudioMetrics, VideoMetrics, CrossModal, CompoundDetector
+)
+
+logging.basicConfig(level=logging.INFO)
+
+class AnalysisSession:
+    def __init__(self, sample_rate=32000, fft_size=2048, hop_ms=20):
+        self.sr = sample_rate
+        self.fft_size = fft_size
+        self.hop = int((sample_rate * hop_ms) / 1000)
+        self.hop_ms = (self.hop / sample_rate) * 1000
+        self.audio = AudioMetrics()
+        self.video = VideoMetrics()
+        self.cross = CrossModal()
+        self.compound = CompoundDetector()
+        self.reset()
+
+    def reset(self):
+        self.audio.reset()
+        self.video.reset()
+        self.cross.reset()
+        self.compound.reset()
+        self.ring = np.zeros(self.fft_size, dtype=np.float32)
+        self.total = 0
+        self.filled = 0
+        self.since_hop = 0
+        self.offset = None
+        self.now = 0
+        self.tick = 0
+        self.last_frame_t = 0
+        self.f0 = {'f0': 0.0, 'clarity': 0.0}
+        self.drop = {'dropDb': 0.0, 'atHz': 0.0}
+
+    def push_audio(self, samples, end_t):
+        end_idx = self.total + len(samples)
+        off = end_t - (end_idx / self.sr) * 1000.0
+        if self.offset is None:
+            self.offset = off
+        else:
+            self.offset = min(off, self.offset + 0.02)
+            
+        for s in samples:
+            self.ring[self.total % self.fft_size] = s
+            self.total += 1
+            if self.filled < self.fft_size:
+                self.filled += 1
+            self.since_hop += 1
+            if self.since_hop >= self.hop:
+                self.since_hop = 0
+                if self.filled == self.fft_size:
+                    self._frame(self.offset + (self.total / self.sr) * 1000.0)
+
+    def _frame(self, t):
+        n = self.fft_size
+        start = self.total % n
+        frame = np.concatenate((self.ring[start:], self.ring[:start]))
+        level = rms(frame)
+        self.cross.push_audio(t, level)
+        self.now = max(self.now, t)
+
+        freq = spectrum_db(frame)
+        hz = self.sr / n
+        flat = spectral_flatness(freq, math.floor(300 / hz), math.floor(4000 / hz))
+        
+        if level >= 0.02 and self.tick % 2 == 0:
+            self.f0 = estimate_f0(frame, self.sr)
+            self.drop = brickwall_drop(freq, self.sr, n)
+        self.tick += 1
+        
+        dt = t - self.last_frame_t if self.last_frame_t else self.hop_ms
+        self.last_frame_t = t
+        self.audio.push({
+            't': t, 'dt': dt, 'rms': level, 'flatness': flat,
+            'f0': self.f0['f0'], 'clarity': self.f0['clarity'], 'dropDb': self.drop['dropDb']
+        })
+
+    def push_face(self, t, face_data):
+        unpacked = unpack_face(face_data)
+        if not unpacked:
+            return False
+        
+        self.video.push(t, unpacked['lm'], unpacked['blend'])
+        if unpacked['lm']:
+            self.cross.push_mouth(t, mouth_aperture(unpacked['lm']))
+        self.now = max(self.now, t)
+        return True
+
+    def evaluate(self):
+        results = self.video.evaluate() + self.audio.evaluate() + self.cross.evaluate(self.now)
+        for r in results:
+            self.compound.report(r['id'], r.get('fired', False), r.get('severity', 0), self.now)
+        
+        # In the original JS the compound detector evaluated directly.
+        # We don't necessarily need to return compound signals unless we want to, 
+        # but the JS client runs its own compound detector locally based on received signals.
+        return results
+
+    def probes(self):
+        return {
+            "video": self.video.probe(),
+            "voice": self.audio.probe(),
+            "crossmodal": self.cross.probe(self.now)
+        }
+    
+    @property
+    def frames(self):
+        return self.video.frames
 
 async def handler(websocket):
     session = AnalysisSession()
