@@ -44,6 +44,27 @@ Manual:
 
 WebSocket relay: connect two clients to `ws://localhost:3001`; a message sent by one arrives at the other.
 
+## Optional voice model
+
+A voice-deepfake model can run alongside the heuristics as the `VOICE_MODEL` signal. It is off by default and
+is never required: if Python or the weights are missing, the signal is simply absent.
+
+```bash
+python -m venv .venv-voice && .venv-voice/Scripts/pip install -r tools/requirements-voice-model.txt
+VOICE_MODEL=1 VOICE_MODEL_PYTHON=.venv-voice/Scripts/python npm start
+```
+
+The server starts the model at boot, since loading it takes a couple of minutes (the first run also downloads
+about 1.2 GB of weights). It scores a 4-second window every few seconds on a background process, so capture is
+never blocked, and fires only when the median of at least 3 windows passes the threshold.
+
+Measured on 210 clips, [pellav2](https://huggingface.co/Sadanie/pellav2-audio-deepfake-detector) scored 0.980
+AUC on phone-quality audio, the best of the three models tested. Treat that number with suspicion: the upload
+is unofficial, so it cannot be ruled out that the evaluation sets were in its training data. The model is also
+confident on anything that is not speech (a sine tone and white noise both score over 99% synthetic), which is
+why only windows containing voiced audio are scored. Calibrate the threshold on your own recordings before
+trusting it.
+
 ## Record and replay
 
 Thresholds are tuned against recorded calls rather than guesses. Add `?record=<label>` to the URL and start a
@@ -56,6 +77,8 @@ node tools/replay.js recordings/genuine-2026-10-17.ndjson   # one capture, with 
 npm run replay -- --summary                                  # every recording, grouped by label
 npm run replay -- --summary --json                           # machine-readable
 ```
+
+Set `VOICE_MODEL=1` on a replay too, to measure the model against the same recordings.
 
 Replay reconstructs the same analysis session the live socket built and drives it from the recorded clock, so
 it needs no camera and always produces the same result. On a capture labelled `genuine`, every tick a signal

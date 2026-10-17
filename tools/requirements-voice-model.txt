@@ -1,0 +1,7 @@
+# Optional: only needed when running the server with VOICE_MODEL=1.
+# Install into a virtualenv, then point the server at it with VOICE_MODEL_PYTHON.
+torch
+transformers
+soundfile
+numpy
+huggingface_hub

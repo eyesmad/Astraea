@@ -50,6 +50,7 @@ export async function replay(file, { tickMs = TICK_MS } = {}) {
       nextTick = session.now + tickMs;
     }
     while (session.now >= nextTick) {
+      await session.drainModel();
       runTick(nextTick);
       nextTick += tickMs;
     }

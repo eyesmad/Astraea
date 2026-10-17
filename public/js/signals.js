@@ -25,6 +25,7 @@ export const SIGNALS = {
   VOCODER_ARTIFACT: { layer: 'voice', label: 'Vocoder signature', weight: 0.5 },
   PROSODY_FLAT: { layer: 'voice', label: 'Prosody', weight: 0.4 },
   BREATH_ABSENT: { layer: 'voice', label: 'Respiratory coupling', weight: 0.4 },
+  VOICE_MODEL: { layer: 'voice', label: 'Voice model', weight: 0.6 },
 
   LIP_DRIFT: { layer: 'crossmodal', label: 'Lip-sync drift', weight: 0.7 },
   LIP_DECOUPLED: { layer: 'crossmodal', label: 'Lips decoupled from voice', weight: 0.5 },
@@ -42,4 +43,5 @@ export const SYNERGY = [
   ['LIP_DRIFT', 'MOTION_SMOOTHNESS'],
   ['VOCODER_ARTIFACT', 'LIP_DRIFT'],
   ['PROSODY_FLAT', 'BREATH_ABSENT'],
+  ['VOICE_MODEL', 'LIP_DRIFT'],
 ];

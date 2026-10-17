@@ -7,6 +7,7 @@ import { analyzeMetadata } from './server/metadata.js';
 import { classify } from './server/scam.js';
 import { SCENARIOS } from './server/scenarios.js';
 import { attachAnalysis } from './server/analysisSocket.js';
+import { sharedVoiceModel, voiceModelEnabled } from './server/voiceModel.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -79,3 +80,9 @@ const httpServer = app.listen(port, '127.0.0.1', () => {
   console.log(`Astraea running at http://localhost:${port} (WebSocket on ws://localhost:${wssPort})`);
 });
 attachAnalysis(httpServer, port);
+
+// Loading the weights takes minutes, so start the sidecar at boot rather than during the first call.
+if (voiceModelEnabled()) {
+  console.log('Voice model enabled, loading weights (first run downloads about 1.2 GB)...');
+  sharedVoiceModel().start().then((ok) => console.log(ok ? 'Voice model ready.' : 'Voice model unavailable; using voice heuristics only.'));
+}
