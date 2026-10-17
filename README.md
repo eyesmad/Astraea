@@ -1,1 +1,1 @@
-# NohoDihs
+# NohoDihs Winning Hackathon Project
