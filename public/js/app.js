@@ -132,10 +132,12 @@ function render(now) {
     const rows = Object.entries(SIGNALS).filter(([, d]) => d.layer === layer).map(([id, def]) => {
       const s = sigState.get(id);
       const cls = !s ? 'idle' : s.fired ? (s.severity >= 0.6 ? 'bad' : 'warn') : 'ok';
+      // State is spelled out as well as coloured: the LED alone does not say which way is good.
+      const word = { idle: 'waiting', ok: 'clear', warn: 'watch', bad: 'flagged' }[cls];
       const detail = s?.detail ? `<div class="detail">${esc(s.detail)}</div>` : '';
-      return `<div class="sig ${cls}"><span class="led"></span><div><div class="name">${esc(def.label)}</div>${detail}</div></div>`;
+      return `<div class="sig ${cls}"><span class="led"></span><div class="sigmain"><div class="name">${esc(def.label)}</div>${detail}</div><span class="state">${word}</span></div>`;
     }).join('');
-    return `<div class="group"><h4>${esc(meta.label)} &middot; ${esc(meta.question)}</h4>${probeHtml(probes?.[layer])}${rows}</div>`;
+    return `<div class="group"><h4>${esc(meta.label)}<span class="q">${esc(meta.question)}</span></h4>${probeHtml(probes?.[layer])}${rows}</div>`;
   }).join('');
 
   renderScam();

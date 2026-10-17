@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Astraea">
+  <rect width="32" height="32" rx="7" fill="#0B0F17"/>
+  <circle cx="16" cy="16" r="11.4" fill="none" stroke="#2C3A52" stroke-width="1.4"/>
+  <path d="M16 4.6 C16.95 11.9 20.1 15.05 27.4 16 C20.1 16.95 16.95 20.1 16 27.4 C15.05 20.1 11.9 16.95 4.6 16 C11.9 15.05 15.05 11.9 16 4.6 Z" fill="#6AA7FF"/>
+</svg>
