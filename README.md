@@ -55,6 +55,12 @@ WebSocket relay: connect two clients to `ws://localhost:3001`; a message sent by
 Every face in the shared video gets a marker: solid brackets on the one the metrics follow (the largest), dashed brackets
 labelled "not analysed" on the rest, so it is clear who the score is about when more than one person is on screen.
 
+Lip-sync is judged against the device, not an absolute number. Every camera and microphone pair has its own
+latency, so a genuine call routinely shows 100-300 ms of constant audio/video offset; the app learns that
+baseline over the first few measurements and only flags movement away from it, a sync that wanders, or an
+offset too large for any capture pipeline to explain. Losing lip/voice correspondence has to persist across
+several readings before it counts, since a pause in speech briefly looks the same.
+
 The trust score is cumulative. Evidence accumulates while a signal fires and decays with a two-minute half-life
 afterwards, rather than only reflecting the current window: a caller who looked synthetic for twenty seconds should not
 read as trustworthy the moment the signal stops. The line under the score says whether the evidence is current ("Now:")
@@ -102,6 +108,8 @@ captures contain real faces and voices.
 ## Caveats
 
 - Detection thresholds are untuned proof-of-concept values.
+- Learning the lip-sync baseline assumes the first several seconds of a call are honest. A fake that is
+  desynchronised from the very first frame is only caught once its offset exceeds the gross limit.
 - STIR/SHAKEN cannot be read in a browser; it comes from the Twilio webhook (`POST /api/webhook/twilio`) or the demo scenarios.
 - Speech-to-text only hears the microphone, not the caller.
 - Content classification runs through Gemini when `GEMINI_API_KEY` is set, and falls back to the offline keyword classifier otherwise or on an API failure.

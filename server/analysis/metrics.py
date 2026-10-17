@@ -475,10 +475,22 @@ def cross_correlate(x, y, max_lag):
     return best_lag, best_corr
 
 
+# Camera and microphone pipelines have their own latencies, so a real call almost always shows a constant
+# audio/video offset of 100 ms or more. That is a property of the devices, not evidence of manipulation:
+# judging the raw offset flagged every honest webcam. What does indicate manipulation is the offset moving
+# (drift) or the tracks not corresponding at all (decoupling), so the baseline is learned first and the
+# signal measures deviation from it. A gross offset is still reported outright, because no capture pipeline
+# explains most of a second of skew.
+BASELINE_MIN_SAMPLES = 6
+BASELINE_MIN_PEAK = 0.2
+GROSS_OFFSET_MS = 600
+DECOUPLED_RUN = 3  # consecutive low-correlation measurements before LIP_DECOUPLED fires
+
+
 class CrossModal:
     """Mouth aperture versus audio energy envelope on a shared clock: the lag is the sync offset."""
 
-    def __init__(self, window_ms=8000, hz=25, max_lag_ms=500, drift_ms=150):
+    def __init__(self, window_ms=8000, hz=25, max_lag_ms=800, drift_ms=150):
         self.window_ms = window_ms
         self.hz = hz
         self.max_lag_ms = max_lag_ms
@@ -489,6 +501,9 @@ class CrossModal:
         self.mouth = []
         self.audio = []
         self.lag_history = []
+        self.baseline_samples = []
+        self.baseline = None
+        self.low_corr_run = 0
 
     def push_mouth(self, t, v):
         self.mouth.append({"t": t, "v": v})
@@ -518,38 +533,84 @@ class CrossModal:
         lag, corr = cross_correlate(ms, a_s, max_lag)
         return {"lag_ms": (lag / self.hz) * 1000, "peak": corr}
 
+    def _update_baseline(self, r):
+        if self.baseline is not None or r["peak"] < BASELINE_MIN_PEAK:
+            return
+        self.baseline_samples.append(r["lag_ms"])
+        if len(self.baseline_samples) >= BASELINE_MIN_SAMPLES:
+            self.baseline = median(self.baseline_samples)
+
     def evaluate(self, now):
         r = self.measure(now)
         if not r:
             return []
+        self._update_baseline(r)
         self.lag_history.append(r["lag_ms"])
         if len(self.lag_history) > 8:
             self.lag_history.pop(0)
 
+        self.low_corr_run = self.low_corr_run + 1 if r["peak"] < 0.12 else 0
+        decoupled = self.low_corr_run >= DECOUPLED_RUN
+
         rng = (max(self.lag_history) - min(self.lag_history)) if len(self.lag_history) >= 5 else 0
-        offset = abs(r["lag_ms"]) >= self.drift_ms and r["peak"] >= 0.25
         drifting = rng >= self.drift_ms and r["peak"] >= 0.2
-        fired = offset or drifting
-        return [
-            {"id": "LIP_DRIFT", "fired": fired,
-             "severity": clamp(max(abs(r["lag_ms"]), rng) / 400, 0.4, 1) if fired else 0,
-             "detail": f"Audio {'lags' if r['lag_ms'] >= 0 else 'leads'} the mouth by "
-                       f"{abs(r['lag_ms']):.0f} ms (peak correlation {r['peak']:.2f}"
-                       + (f", lag wandered {rng:.0f} ms" if drifting else "") + ")."},
-            {"id": "LIP_DECOUPLED", "fired": r["peak"] < 0.12,
-             "severity": 0.5 if r["peak"] < 0.12 else 0,
-             "detail": (f"Lip movement and voice barely correlate ({r['peak']:.2f})." if r["peak"] < 0.12
-                        else f"Lips and voice correlate ({r['peak']:.2f}).")},
-        ]
+        gross = abs(r["lag_ms"]) >= GROSS_OFFSET_MS and r["peak"] >= 0.25
+
+        out = []
+        if self.baseline is None and not gross:
+            detail = (f"Learning this device's audio/video offset "
+                      f"({len(self.baseline_samples)}/{BASELINE_MIN_SAMPLES} samples).")
+            out.append({"id": "LIP_DRIFT", "fired": False, "severity": 0, "detail": detail})
+        else:
+            dev = r["lag_ms"] - (self.baseline or 0)
+            shifted = abs(dev) >= self.drift_ms and r["peak"] >= 0.25
+            fired = shifted or drifting or gross
+            if gross:
+                why = (f"Audio {'lags' if r['lag_ms'] >= 0 else 'leads'} the mouth by "
+                       f"{abs(r['lag_ms']):.0f} ms, far beyond any capture delay")
+            elif shifted:
+                why = (f"Sync shifted {abs(dev):.0f} ms from this device's "
+                       f"{self.baseline:+.0f} ms baseline")
+            elif drifting:
+                why = f"Sync wandered {rng:.0f} ms"
+            else:
+                why = (f"Audio {'lags' if r['lag_ms'] >= 0 else 'leads'} the mouth by "
+                       f"{abs(r['lag_ms']):.0f} ms, in line with this device's "
+                       f"{self.baseline:+.0f} ms baseline")
+            out.append({
+                "id": "LIP_DRIFT", "fired": fired,
+                "severity": clamp(max(abs(dev), rng, abs(r["lag_ms"]) if gross else 0) / 400, 0.4, 1)
+                            if fired else 0,
+                "detail": f"{why} (peak correlation {r['peak']:.2f}).",
+            })
+
+        out.append({
+            "id": "LIP_DECOUPLED", "fired": decoupled,
+            "severity": 0.5 if decoupled else 0,
+            "detail": (f"Lip movement and voice have not corresponded for {self.low_corr_run} readings "
+                       f"({r['peak']:.2f}).") if decoupled
+                      else f"Lips and voice correlate ({r['peak']:.2f}).",
+        })
+        return out
 
     def probe(self, now):
         r = self.measure(now)
         has_both = bool(self.mouth and self.audio)
+        if r and self.baseline is not None:
+            dev = r["lag_ms"] - self.baseline
+            sync_text = f"{dev:+.0f} ms from this device's {self.baseline:+.0f} ms baseline"
+            sync_bar = clamp(abs(dev) / 400, 0, 1)
+        elif r:
+            sync_text = (f"calibrating, {len(self.baseline_samples)}/{BASELINE_MIN_SAMPLES} samples "
+                         f"(raw {r['lag_ms']:+.0f} ms)")
+            sync_bar = 0
+        else:
+            sync_text = "needs a speaking face and audible voice"
+            sync_bar = 0
         return [
-            {"key": "sync", "label": "Lip-sync offset", "progress": 1 if r else (0.6 if has_both else 0),
-             "text": (f"{'audio behind' if r['lag_ms'] >= 0 else 'audio ahead'} {abs(r['lag_ms']):.0f} ms")
-                     if r else "needs a speaking face and audible voice",
-             "bar": clamp(abs(r["lag_ms"]) / 400, 0, 1) if r else 0},
+            {"key": "sync", "label": "Lip-sync offset",
+             "progress": (1 if self.baseline is not None else 0.5) if r else (0.6 if has_both else 0),
+             "text": sync_text, "bar": sync_bar},
             {"key": "corr", "label": "Lip/voice correlation", "progress": 1 if r else 0,
              "text": f"{r['peak']:.2f}" if r else "measuring",
              "bar": clamp(1 - r["peak"] / 0.5, 0, 1) if r else 0},

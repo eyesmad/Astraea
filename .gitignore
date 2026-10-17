@@ -4,3 +4,5 @@ node_modules/
 recordings/
 venv/
 .venv-voice/
+__pycache__/
+*.pyc

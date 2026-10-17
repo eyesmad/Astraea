@@ -80,21 +80,24 @@ function drive(session, seconds, lagSec) {
   }
 }
 
-test('server session recovers a 300 ms audio lag and fires LIP_DRIFT', () => {
+test('server session recovers a 300 ms audio lag from the streamed clocks', () => {
   const s = new AnalysisSession({ sampleRate: SR });
   drive(s, 12, 0.3);
+  // A constant offset is a capture-pipeline property, so it is measured but not flagged; what the session
+  // has to get right here is the number.
+  const m = s.cross.measure(s.now);
+  assert.ok(m, 'cross-modal measurement present');
+  assert.ok(Math.abs(m.lagMs - 300) <= 80, `measured ${m.lagMs} ms`);
   const lip = s.evaluate().find((r) => r.id === 'LIP_DRIFT');
-  assert.ok(lip, 'cross-modal result present');
-  assert.equal(lip.fired, true);
-  const ms = Number(/by (\d+) ms/.exec(lip.detail)[1]);
-  assert.ok(Math.abs(ms - 300) <= 80, lip.detail);
+  assert.equal(lip.fired, false, lip.detail);
 });
 
 test('server session sees aligned audio as in sync', () => {
   const s = new AnalysisSession({ sampleRate: SR });
   drive(s, 12, 0);
+  const m = s.cross.measure(s.now);
+  assert.ok(Math.abs(m.lagMs) <= 80, `measured ${m.lagMs} ms`);
   const lip = s.evaluate().find((r) => r.id === 'LIP_DRIFT');
-  assert.ok(lip);
   assert.equal(lip.fired, false, lip.detail);
 });
 

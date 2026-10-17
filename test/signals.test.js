@@ -47,23 +47,78 @@ test('resample interpolates onto a uniform grid', () => {
   assert.ok(Math.abs(r[5] - 5) < 1e-9);
 });
 
-test('CrossModal flags offset audio but not synced audio', () => {
-  const hz = 50;
-  const seconds = 10;
-  const mouthEnv = envelope(seconds * hz, hz, 3);
-  const run = (shiftSamples) => {
-    const cm = new CrossModal();
-    for (let i = 0; i < mouthEnv.length; i++) {
-      const t = i * (1000 / hz);
-      cm.pushMouth(t, 0.02 + 0.1 * mouthEnv[i]);
-      cm.pushAudio(t, 0.01 + 0.2 * (mouthEnv[i - shiftSamples] ?? 0));
+// Feeds a CrossModal in real-time order, evaluating once a second as the app does. `shiftAt(t)` gives the
+// audio delay in samples at that moment, so a capture pipeline's constant offset and a mid-call change can
+// both be simulated.
+function runCrossModal(seconds, shiftAt, { hz = 50 } = {}) {
+  const env = envelope(seconds * hz + 100, hz, 3);
+  const cm = new CrossModal();
+  let nextEval = 1000;
+  let last = [];
+  for (let i = 0; i < seconds * hz; i++) {
+    const t = i * (1000 / hz);
+    cm.pushMouth(t, 0.02 + 0.1 * env[i]);
+    cm.pushAudio(t, 0.01 + 0.2 * (env[i - shiftAt(t)] ?? 0));
+    if (t >= nextEval) {
+      const r = cm.evaluate(t);
+      if (r.length) last = r;
+      nextEval += 1000;
     }
-    return Object.fromEntries(cm.evaluate(seconds * 1000 - 1).map((r) => [r.id, r]));
-  };
-  assert.equal(run(0).LIP_DRIFT.fired, false);
-  const drift = run(15); // 300 ms
-  assert.equal(drift.LIP_DRIFT.fired, true);
-  assert.ok(drift.LIP_DRIFT.detail.includes('lags'));
+  }
+  return { cm, byId: Object.fromEntries(last.map((r) => [r.id, r])) };
+}
+
+test('CrossModal treats a constant device offset as the baseline, not drift', () => {
+  // 300 ms of constant audio delay is ordinary webcam latency and must not fire.
+  const { cm, byId } = runCrossModal(24, () => 15);
+  assert.equal(byId.LIP_DRIFT.fired, false, byId.LIP_DRIFT.detail);
+  assert.ok(cm.baseline != null, 'a baseline was learned');
+  assert.ok(Math.abs(cm.baseline - 300) < 60, `baseline was ${cm.baseline}`);
+  assert.ok(byId.LIP_DRIFT.detail.includes('baseline'));
+});
+
+test('CrossModal does not fire while it is still learning the baseline', () => {
+  // Measurements only start once an 8 s window exists, so 12 s yields a few samples: fewer than a baseline.
+  const { cm, byId } = runCrossModal(12, () => 15);
+  assert.equal(cm.baseline, null, `baseline from ${cm.baselineSamples.length} samples`);
+  assert.equal(byId.LIP_DRIFT.fired, false);
+  assert.ok(byId.LIP_DRIFT.detail.includes('Learning'), byId.LIP_DRIFT.detail);
+});
+
+test('CrossModal flags sync that shifts away from the baseline', () => {
+  // Steady for 22 s, then the audio jumps 400 ms later: that change is the deepfake signature.
+  const { byId } = runCrossModal(40, (t) => (t < 22000 ? 0 : 20));
+  assert.equal(byId.LIP_DRIFT.fired, true, byId.LIP_DRIFT.detail);
+  assert.ok(/shifted|wandered/.test(byId.LIP_DRIFT.detail), byId.LIP_DRIFT.detail);
+});
+
+test('CrossModal reports a gross offset even before a baseline exists', () => {
+  const { cm, byId } = runCrossModal(12, () => 36); // 720 ms, beyond any capture pipeline
+  assert.equal(cm.baseline, null, 'still calibrating');
+  assert.equal(byId.LIP_DRIFT.fired, true, byId.LIP_DRIFT.detail);
+  assert.ok(byId.LIP_DRIFT.detail.includes('beyond any capture delay'), byId.LIP_DRIFT.detail);
+});
+
+test('LIP_DECOUPLED needs sustained loss of correspondence, not one reading', () => {
+  // Driving measure() directly pins the run-counting: a single bad reading is what used to fire it.
+  const cm = new CrossModal();
+  cm.measure = () => ({ lagMs: 0, peak: 0.05 });
+  const fired = [];
+  for (let i = 0; i < 4; i++) {
+    fired.push(cm.evaluate(1000 * i).find((r) => r.id === 'LIP_DECOUPLED').fired);
+  }
+  assert.deepEqual(fired, [false, false, true, true]);
+
+  // One good reading clears the run, so an isolated dip cannot accumulate into an alert.
+  cm.measure = () => ({ lagMs: 0, peak: 0.6 });
+  assert.equal(cm.evaluate(5000).find((r) => r.id === 'LIP_DECOUPLED').fired, false);
+  assert.equal(cm.lowCorrRun, 0);
+});
+
+test('CrossModal stays quiet for a normally correlated call', () => {
+  const { byId } = runCrossModal(24, () => 0);
+  assert.equal(byId.LIP_DECOUPLED.fired, false, byId.LIP_DECOUPLED.detail);
+  assert.equal(byId.LIP_DRIFT.fired, false, byId.LIP_DRIFT.detail);
 });
 
 test('CompoundDetector needs two live signals inside the window', () => {

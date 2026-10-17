@@ -243,13 +243,18 @@ class TestVideoMetrics(unittest.TestCase):
 class TestSession(unittest.TestCase):
     def test_recovers_a_300ms_audio_lag(self):
         s = drive(AnalysisSession(sample_rate=SR, model=None), 12, lag_sec=0.3)
+        # A constant offset is a capture-pipeline property, so it is measured but not flagged; what the
+        # session has to get right here is the number.
+        m = s.cross.measure(s.now)
+        self.assertIsNotNone(m)
+        self.assertLessEqual(abs(m["lag_ms"] - 300), 80, f"measured {m['lag_ms']} ms")
         lip = next(r for r in s.evaluate() if r["id"] == "LIP_DRIFT")
-        self.assertTrue(lip["fired"], lip["detail"])
-        ms = int(lip["detail"].split("by ")[1].split(" ms")[0])
-        self.assertLessEqual(abs(ms - 300), 80, lip["detail"])
+        self.assertFalse(lip["fired"], lip["detail"])
 
     def test_aligned_audio_is_in_sync(self):
         s = drive(AnalysisSession(sample_rate=SR, model=None), 12, lag_sec=0.0)
+        m = s.cross.measure(s.now)
+        self.assertLessEqual(abs(m["lag_ms"]), 80, f"measured {m['lag_ms']} ms")
         lip = next(r for r in s.evaluate() if r["id"] == "LIP_DRIFT")
         self.assertFalse(lip["fired"], lip["detail"])
 
@@ -319,3 +324,69 @@ class TestVoiceModelGating(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def run_cross_modal(seconds, shift_at, hz=50):
+    """Feeds a CrossModal in real-time order, evaluating once a second as the server does.
+
+    `shift_at(t)` gives the audio delay in samples at that moment, so a capture pipeline's constant offset
+    and a mid-call change can both be simulated.
+    """
+    env = envelope(seconds + 4)
+    cm = CrossModal()
+    next_eval = 1000
+    last = []
+    for i in range(int(seconds * hz)):
+        t = i * (1000 / hz)
+        cm.push_mouth(t, 0.02 + 0.1 * env(i / hz))
+        cm.push_audio(t, 0.01 + 0.2 * env((i - shift_at(t)) / hz))
+        if t >= next_eval:
+            r = cm.evaluate(t)
+            if r:
+                last = r
+            next_eval += 1000
+    return cm, {x["id"]: x for x in last}
+
+
+class TestCrossModalBaseline(unittest.TestCase):
+    def test_constant_device_offset_is_the_baseline_not_drift(self):
+        # 300 ms of constant audio delay is ordinary webcam latency and must not fire.
+        cm, by_id = run_cross_modal(24, lambda t: 15)
+        self.assertFalse(by_id["LIP_DRIFT"]["fired"], by_id["LIP_DRIFT"]["detail"])
+        self.assertIsNotNone(cm.baseline)
+        self.assertLess(abs(cm.baseline - 300), 60, f"baseline was {cm.baseline}")
+        self.assertIn("baseline", by_id["LIP_DRIFT"]["detail"])
+
+    def test_does_not_fire_while_learning_the_baseline(self):
+        cm, by_id = run_cross_modal(12, lambda t: 15)
+        self.assertIsNone(cm.baseline)
+        self.assertFalse(by_id["LIP_DRIFT"]["fired"])
+        self.assertIn("Learning", by_id["LIP_DRIFT"]["detail"])
+
+    def test_flags_sync_that_shifts_away_from_the_baseline(self):
+        _, by_id = run_cross_modal(40, lambda t: 0 if t < 22000 else 20)
+        self.assertTrue(by_id["LIP_DRIFT"]["fired"], by_id["LIP_DRIFT"]["detail"])
+        self.assertRegex(by_id["LIP_DRIFT"]["detail"], "shifted|wandered")
+
+    def test_gross_offset_fires_before_a_baseline_exists(self):
+        cm, by_id = run_cross_modal(12, lambda t: 36)  # 720 ms, beyond any capture pipeline
+        self.assertIsNone(cm.baseline, "still calibrating")
+        self.assertTrue(by_id["LIP_DRIFT"]["fired"], by_id["LIP_DRIFT"]["detail"])
+        self.assertIn("beyond any capture delay", by_id["LIP_DRIFT"]["detail"])
+
+    def test_normally_correlated_call_stays_quiet(self):
+        _, by_id = run_cross_modal(24, lambda t: 0)
+        self.assertFalse(by_id["LIP_DRIFT"]["fired"], by_id["LIP_DRIFT"]["detail"])
+        self.assertFalse(by_id["LIP_DECOUPLED"]["fired"], by_id["LIP_DECOUPLED"]["detail"])
+
+    def test_decoupled_needs_sustained_loss_of_correspondence(self):
+        cm = CrossModal()
+        cm.measure = lambda now: {"lag_ms": 0, "peak": 0.05}
+        fired = [next(x for x in cm.evaluate(1000 * i) if x["id"] == "LIP_DECOUPLED")["fired"]
+                 for i in range(4)]
+        self.assertEqual(fired, [False, False, True, True])
+
+        # One good reading clears the run, so an isolated dip cannot accumulate into an alert.
+        cm.measure = lambda now: {"lag_ms": 0, "peak": 0.6}
+        self.assertFalse(next(x for x in cm.evaluate(5000) if x["id"] == "LIP_DECOUPLED")["fired"])
+        self.assertEqual(cm.low_corr_run, 0)

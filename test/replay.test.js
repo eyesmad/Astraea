@@ -44,7 +44,10 @@ function face(mouth) {
 
 // Writes a recording the way the live socket does, and drives a session with the same data at the same time,
 // so the test can assert that replaying the file reproduces what the live session saw.
+// lagSec may be a number (a constant capture offset) or a function of elapsed seconds (a sync that moves,
+// which is what actually indicates manipulation).
 async function record(file, { seconds, lagSec, label }) {
+  const lagAt = typeof lagSec === 'function' ? lagSec : () => lagSec;
   const w = new RecordingWriter(file, { sampleRate: SR, label });
   const live = sessionFor(SR);
   const e = env(seconds);
@@ -52,7 +55,7 @@ async function record(file, { seconds, lagSec, label }) {
   const clock = 5000;
   let nextFace = 0;
   for (let i = 0; i < seconds * SR; i += chunk) {
-    const samples = new Float32Array(chunk).map((_, k) => voice((i + k) / SR - lagSec, e));
+    const samples = new Float32Array(chunk).map((_, k) => voice((i + k) / SR - lagAt((i + k) / SR), e));
     const endT = clock + ((i + chunk) / SR) * 1000;
     const buf = encodeAudioChunk(samples, endT);
     const decoded = decodeAudioChunk(buf);
@@ -97,13 +100,12 @@ test('replay reproduces what the live session measured', async () => {
     assert.equal(r.frames, live.frames);
 
     // The lag the live session measured must come back from the file. The live session is evaluated after the
-    // last sample while the replay's final tick sits on a one-second boundary, so the correlation at those two
-    // instants can differ slightly; the measured lag is the invariant.
-    const lagOf = (detail) => Number(/by (\d+) ms/.exec(detail)[1]);
-    const liveLip = live.evaluate().find((x) => x.id === 'LIP_DRIFT');
-    const replayLip = r.signals.find((x) => x.id === 'LIP_DRIFT');
-    assert.ok(replayLip.fired > 0, 'LIP_DRIFT fired during replay');
-    assert.equal(lagOf(replayLip.lastDetail), lagOf(liveLip.detail));
+    // last sample while the replay's final tick sits on a one-second boundary, so the two can differ
+    // slightly; the measured offset is the invariant.
+    const liveLag = live.cross.measure(live.now).lagMs;
+    assert.ok(Math.abs(liveLag - 300) <= 80, `live measured ${liveLag} ms`);
+    assert.ok(r.signals.some((x) => x.id === 'LIP_DRIFT'), 'cross-modal ran during replay');
+    assert.ok(/300|3\d\d|2\d\d/.test(r.probes.crossmodal[0].text), r.probes.crossmodal[0].text);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -128,11 +130,12 @@ test('summary separates genuine from fake captures', async () => {
   try {
     const bad = path.join(dir, 'fake.ndjson');
     const good = path.join(dir, 'genuine.ndjson');
-    await record(bad, { seconds: 12, lagSec: 0.3, label: 'fake' });
-    await record(good, { seconds: 12, lagSec: 0, label: 'genuine' });
+    // The fake drifts mid-call; the genuine one carries a constant 300 ms capture offset, which must not fire.
+    await record(bad, { seconds: 40, lagSec: (t) => (t < 24 ? 0 : 0.4), label: 'fake' });
+    await record(good, { seconds: 40, lagSec: 0.3, label: 'genuine' });
     const rows = Object.fromEntries(summarize([await replay(bad), await replay(good)]).map((r) => [r.id, r]));
-    assert.equal(rows.LIP_DRIFT.genuine.fired, 0, 'no false positive on the in-sync capture');
-    assert.ok(rows.LIP_DRIFT.fake.fired > 0, 'fires on the out-of-sync capture');
+    assert.equal(rows.LIP_DRIFT.genuine.fired, 0, 'a constant device offset must not be a false positive');
+    assert.ok(rows.LIP_DRIFT.fake.fired > 0, 'a sync that moves mid-call must fire');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -96,6 +96,12 @@ export class TrustLedger {
     this.last = null;
   }
 
+  // Stops time for the ledger: the next observe() resumes without charging the gap as decay, so a score
+  // does not quietly drift while nothing is being captured.
+  pause() {
+    this.last = null;
+  }
+
   // Call once per tick with everything currently firing.
   observe(active, now) {
     const dt = this.last == null ? 0 : Math.max(0, now - this.last);

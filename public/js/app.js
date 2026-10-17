@@ -92,7 +92,9 @@ function render(now) {
   const markerActive = marker && now < markerUntil;
   const live = activeSignals().filter(({ id }) => !SIGNALS[id].standing);
   const standing = activeSignals().filter(({ id }) => SIGNALS[id].standing);
-  ledger.observe(live, now);
+  // Only accumulate while capturing: after Stop there is nothing new to see, so the score should hold
+  // rather than keep moving as the last signals expire and decay.
+  if (stream) ledger.observe(live, now);
   const trust = ledger.trust(standing);
   const lab = trustLabel(trust);
   $('#trustPct').textContent = pct(trust);
@@ -146,6 +148,11 @@ function render(now) {
 // firing looks like a bug rather than the memory of what was seen earlier in the call.
 function renderTrustSub(trust, liveCount) {
   const el = $('#trustSub');
+  if (!stream && ledger.summary().length) {
+    const top = ledger.summary().slice(0, 2).map((e) => SIGNALS[e.id].label).join(', ');
+    el.textContent = `Call ended. Evidence seen: ${top}.`;
+    return;
+  }
   const top = ledger.summary().slice(0, 2).filter((e) => e.contribution > 0.02);
   if (!top.length) {
     el.textContent = stream ? 'No evidence against this call yet.' : '';
@@ -380,6 +387,13 @@ function stopCapture() {
   }
   v.classList.remove('live');
   $('#btnStop').disabled = true;
+  ledger.pause();
+  // Live signals describe a stream that no longer exists; leaving them "firing" kept the score moving for
+  // another twelve seconds while they timed out.
+  for (const [id, sig] of sigState) {
+    if (!SIGNALS[id].standing && sig.fired) report(id, { fired: false });
+  }
+  trackedFaces = [];
 }
 
 function visionStep() {
