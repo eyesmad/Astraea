@@ -13,7 +13,7 @@ export const IDX = {
   stable: [1, 152, 33, 263, 61, 291, 10],
 };
 
-const BLEND_KEYS = [
+export const BLEND_KEYS = [
   'jawOpen', 'mouthSmileLeft', 'mouthSmileRight', 'browDownLeft', 'browDownRight',
   'browInnerUp', 'eyeSquintLeft', 'eyeSquintRight', 'mouthFrownLeft', 'mouthFrownRight', 'cheekPuff', 'mouthPucker',
 ];

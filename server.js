@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { analyzeMetadata } from './server/metadata.js';
 import { classify } from './server/scam.js';
 import { SCENARIOS } from './server/scenarios.js';
+import { attachAnalysis } from './server/analysisSocket.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -74,6 +75,7 @@ wss.on('connection', (socket) => {
   socket.on('error', (err) => console.error(`Socket error: ${err.message}`));
 });
 
-app.listen(port, '127.0.0.1', () => {
+const httpServer = app.listen(port, '127.0.0.1', () => {
   console.log(`Astraea running at http://localhost:${port} (WebSocket on ws://localhost:${wssPort})`);
 });
+attachAnalysis(httpServer, port);

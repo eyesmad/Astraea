@@ -3,6 +3,7 @@ import { CompoundDetector, computeTrust, trustLabel } from './compound.js';
 import { VideoMetrics, mouthAperture } from './videoMetrics.js';
 import { AudioAnalyzer } from './audioAnalyzer.js';
 import { CrossModal } from './crossmodal.js';
+import { RemoteAnalysis } from './remote.js';
 import { Vision } from './vision.js';
 import { CHALLENGES, pickChallenge } from './gestures.js';
 
@@ -17,6 +18,12 @@ const videoMetrics = new VideoMetrics();
 const crossModal = new CrossModal();
 const audio = new AudioAnalyzer({ onEnvelope: (t, v) => crossModal.pushAudio(t, v) });
 const vision = new Vision();
+// Audio features, face metrics and cross-modal sync run on the server; the local classes above are the fallback
+// when the analysis socket cannot be reached.
+const remote = new RemoteAnalysis({
+  onSignals: (results) => { const now = performance.now(); for (const r of results) report(r.id, r, now); },
+  onClose: () => { if (stream) log('Lost the analysis server connection. Signals from audio and face metrics have stopped.'); },
+});
 
 let config = { scenarios: [] };
 let stream = null;
@@ -117,10 +124,13 @@ function renderScam() {
 function tick() {
   const now = performance.now();
   if (stream) {
-    for (const r of videoMetrics.evaluate()) report(r.id, r, now);
-    for (const r of audio.evaluate()) report(r.id, r, now);
-    for (const r of crossModal.evaluate(now)) report(r.id, r, now);
-    $('#srcStatus').textContent = now - lastFaceT > 3000 ? 'No face detected in the shared video.' : `Tracking face (${videoMetrics.frames} frames).`;
+    if (!remote.active) {
+      for (const r of videoMetrics.evaluate()) report(r.id, r, now);
+      for (const r of audio.evaluate()) report(r.id, r, now);
+      for (const r of crossModal.evaluate(now)) report(r.id, r, now);
+    }
+    const frames = remote.active ? remote.frames : videoMetrics.frames;
+    $('#srcStatus').textContent = now - lastFaceT > 3000 ? 'No face detected in the shared video.' : `Tracking face (${frames} frames${remote.active ? ', analysed on server' : ''}).`;
   }
   for (const [id, s] of sigState) {
     if (!SIGNALS[id].standing && s.fired && now - s.t > LIVE_TTL_MS) report(id, { fired: false }, now);
@@ -273,7 +283,18 @@ async function startCapture(kind, file = null) {
     $('#btnStop').disabled = false;
     $('#srcStatus').textContent = 'Loading MediaPipe models...';
     if (!vision.face) await vision.init();
-    const hasAudio = stream ? await audio.start(stream) : false;
+    let hasAudio = false;
+    if (stream && (await remote.connect())) {
+      try {
+        hasAudio = await remote.startAudio(stream);
+      } catch (err) {
+        log(`Server audio streaming unavailable (${err.message}); analysing in the browser.`);
+        remote.stop();
+      }
+    } else if (stream) {
+      log('Analysis server unreachable; analysing in the browser.');
+    }
+    if (stream && !remote.active) hasAudio = await audio.start(stream);
     if (!hasAudio) log('No audio track was shared. Voice and lip-sync checks are off. Tick "Share audio" when picking a tab.');
     t0 = performance.now();
     visionTimer = setInterval(visionStep, 33);
@@ -288,6 +309,7 @@ function stopCapture() {
   clearInterval(visionTimer);
   visionTimer = null;
   audio.stop();
+  remote.stop();
   stream?.getTracks().forEach((t) => t.stop());
   stream = null;
   const v = $('#preview');
@@ -306,8 +328,12 @@ function visionStep() {
   if (!res) return;
   if (res.face) {
     lastFaceT = t;
-    videoMetrics.push(t, res.face, res.blend);
-    crossModal.pushMouth(t, mouthAperture(res.face));
+    if (remote.active) {
+      remote.sendFace(t, res.face, res.blend);
+    } else {
+      videoMetrics.push(t, res.face, res.blend);
+      crossModal.pushMouth(t, mouthAperture(res.face));
+    }
   }
   if (challenge?.state === 'running') stepChallenge(res, t);
 }
@@ -404,6 +430,7 @@ function resetAll() {
   videoMetrics.reset();
   crossModal.reset();
   audio.metrics.reset();
+  remote.reset();
   marker = null;
   scam = null;
   challenge = null;
