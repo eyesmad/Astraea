@@ -1,4 +1,3 @@
-import http from 'node:http';
 import express from 'express';
 import WebSocket, { WebSocketServer } from 'ws';
 import fs from 'node:fs';
@@ -20,15 +19,6 @@ if (fs.existsSync(envFile)) {
 }
 
 const app = express();
-app.use(express.json({ limit: '256kb' }));
-app.use(express.urlencoded({ extended: false }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.get('/api/config', (_req, res) => {
-  res.json({
-    ipqs: Boolean(process.env.IPQS_API_KEY),
-    llm: Boolean(process.env.ANTHROPIC_API_KEY),
-    scenarios: SCENARIOS.map((s) => ({ id: s.id, label: s.label, call: s.call })),
   });
 });
 
@@ -60,10 +50,10 @@ app.post('/api/webhook/twilio', (req, res) => {
 app.get('/api/calls/latest', (_req, res) => res.json(latestCall));
 
 const port = Number(process.env.PORT) || 3000;
-const server = http.createServer(app);
+const wssPort = Number(process.env.WSS_PORT) || 3001;
 
-// WebSocket relay (same port, path /ws): rebroadcasts each message to the other clients.
-const wss = new WebSocketServer({ server, path: '/ws' });
+// WebSocket relay on its own port: rebroadcasts each message to the other clients.
+const wss = new WebSocketServer({ port: wssPort });
 wss.on('connection', (socket) => {
   console.log(`WS client connected. Total: ${wss.clients.size}`);
   socket.on('message', (data, isBinary) => {
@@ -75,6 +65,6 @@ wss.on('connection', (socket) => {
   socket.on('error', (err) => console.error(`Socket error: ${err.message}`));
 });
 
-server.listen(port, '127.0.0.1', () => {
-  console.log(`Astraea running at http://localhost:${port} (WebSocket on ws://localhost:${port}/ws)`);
+app.listen(port, '127.0.0.1', () => {
+  console.log(`Astraea running at http://localhost:${port} (WebSocket on ws://localhost:${wssPort})`);
 });
