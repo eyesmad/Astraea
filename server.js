@@ -5,12 +5,11 @@ import { WebSocketServer } from 'ws';
 // Initialize the Express application instance
 const app = express();
 const PORT = 3000;
-const WSS_PORT = 3001;
 
 // WEBSOCKET ============================================================================
-const wss = new WebSocketServer({ port: WSS_PORT });
+const wss = new WebSocketServer({ port: PORT });
 
-console.log(`WebSocket server is running on ws://localhost:${WSS_PORT}`);
+console.log(`WebSocket server is running on ws://localhost:${PORT}`);
 
 wss.on('connection', (socket) => {
   console.log(`New client connected. Total clients: ${wss.clients.size}`);
