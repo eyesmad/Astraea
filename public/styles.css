@@ -104,16 +104,16 @@ h1 {
 }
 
 .brandblock .mark {
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   flex: none;
   color: var(--accent);
-  margin-top: 2px;
+  margin-top: 3px;
 }
 
 .brand .mark {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   color: var(--accent);
 }
 
