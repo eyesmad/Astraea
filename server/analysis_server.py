@@ -29,8 +29,10 @@ import time
 
 from analysis_metrics import (
     spectrum_db, estimate_f0, brickwall_drop, spectral_flatness, rms,
-    unpack_face, mouth_aperture, AudioMetrics, VideoMetrics, CrossModal, CompoundDetector
+    unpack_face, mouth_aperture, AudioMetrics, VideoMetrics, CrossModal,
+    CompoundDetector, PhonemeSync
 )
+from analysis.phoneme_pipeline import PhonemePipeline
 
 logging.basicConfig(level=logging.INFO)
 
@@ -44,6 +46,8 @@ class AnalysisSession:
         self.video = VideoMetrics()
         self.cross = CrossModal()
         self.compound = CompoundDetector()
+        self.phoneme = PhonemeSync()
+        self.phoneme_pipeline = PhonemePipeline(self)
         self.reset()
 
     def reset(self):
@@ -51,6 +55,8 @@ class AnalysisSession:
         self.video.reset()
         self.cross.reset()
         self.compound.reset()
+        self.phoneme.reset()
+        self.phoneme_pipeline.reset()
         self.ring = np.zeros(self.fft_size, dtype=np.float32)
         self.total = 0
         self.filled = 0
@@ -72,6 +78,7 @@ class AnalysisSession:
         else:
             self.offset = min(off, self.offset + 0.02)
             
+        self.phoneme_pipeline.push_audio(samples, self.sr)
         self.audio_buf = np.concatenate((self.audio_buf, samples))
         
         while self.since_hop + len(samples) >= self.hop:
@@ -114,7 +121,7 @@ class AnalysisSession:
             'f0': self.f0['f0'], 'clarity': self.f0['clarity'], 'dropDb': self.drop['dropDb']
         })
 
-    def push_face(self, t, face_data):
+    def push_face(self, t, face_data, mouth_crop=None):
         unpacked = unpack_face(face_data)
         if not unpacked:
             return False
@@ -122,11 +129,15 @@ class AnalysisSession:
         self.video.push(t, unpacked['lm'], unpacked['blend'])
         if unpacked['lm']:
             self.cross.push_mouth(t, mouth_aperture(unpacked['lm']))
+        
+        if mouth_crop:
+            self.phoneme_pipeline.push_mouth(t, mouth_crop)
+
         self.now = max(self.now, t)
         return True
 
     def evaluate(self):
-        results = self.video.evaluate() + self.audio.evaluate() + self.cross.evaluate(self.now)
+        results = self.video.evaluate() + self.audio.evaluate() + self.cross.evaluate(self.now) + self.phoneme.evaluate()
         for r in results:
             self.compound.report(r['id'], r.get('fired', False), r.get('severity', 0), self.now)
         
@@ -139,7 +150,8 @@ class AnalysisSession:
         return {
             "video": self.video.probe(),
             "voice": self.audio.probe(),
-            "crossmodal": self.cross.probe(self.now)
+            "crossmodal": self.cross.probe(self.now),
+            "phoneme": self.phoneme.probe()
         }
     
     @property

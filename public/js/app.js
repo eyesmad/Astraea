@@ -398,6 +398,29 @@ function stopCapture() {
   trackedFaces = [];
 }
 
+const mouthCanvas = document.createElement('canvas');
+mouthCanvas.width = 140;
+mouthCanvas.height = 46;
+const mouthCtx = mouthCanvas.getContext('2d', { willReadFrequently: true });
+
+function extractMouthCrop(video, lm) {
+  if (!video || video.videoWidth === 0 || !lm) return null;
+  // Use face landmarks 61, 291 for width and 13, 14 for height roughly to get bounding box
+  const cx = ((lm[61].x + lm[291].x) / 2) * video.videoWidth;
+  const cy = ((lm[13].y + lm[14].y) / 2) * video.videoHeight;
+  
+  const mouthWidth = Math.abs(lm[291].x - lm[61].x) * video.videoWidth;
+  // Ensure the bounding box covers the mouth area adequately
+  const scale = 140 / (mouthWidth * 1.5 || 1);
+  const srcW = 140 / scale;
+  const srcH = 46 / scale;
+  const sx = cx - srcW / 2;
+  const sy = cy - srcH / 2;
+  
+  mouthCtx.drawImage(video, sx, sy, srcW, srcH, 0, 0, 140, 46);
+  return mouthCanvas.toDataURL('image/jpeg', 0.6);
+}
+
 function visionStep() {
   const t = performance.now();
   const res = vision.detect($('#preview'), t, challenge?.state === 'running');
@@ -405,8 +428,9 @@ function visionStep() {
   trackedFaces = faceTracker.update(res.faces, t);
   if (res.face) {
     lastFaceT = t;
+    const mouthCrop = extractMouthCrop($('#preview'), res.face);
     if (remote.active) {
-      remote.sendFaces(t, trackedFaces);
+      remote.sendFaces(t, trackedFaces, mouthCrop);
     } else {
       videoMetrics.push(t, res.face, res.blend);
       crossModal.pushMouth(t, mouthAperture(res.face));

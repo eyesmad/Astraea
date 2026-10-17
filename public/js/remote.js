@@ -83,12 +83,13 @@ export class RemoteAnalysis {
 
   // Every visible face goes up so the server can report how many are present; the primary one, which the
   // tracker keeps stable across frames, is the one its metrics follow.
-  sendFaces(t, faces) {
+  sendFaces(t, faces, mouthCrop = null) {
     if (!this.active || !faces.length) return;
     this.ws.send(JSON.stringify({
       type: 'faces',
       t,
       faces: faces.map((f) => ({ id: f.id, primary: f.primary, t, p: packFace(f.lm, f.blend) })),
+      mouth: mouthCrop
     }));
   }
 

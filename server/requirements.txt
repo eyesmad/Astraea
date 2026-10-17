@@ -2,3 +2,9 @@
 numpy
 websockets
 scipy
+tensorflow
+onnxruntime
+faster-whisper
+nltk
+g2p_en
+Levenshtein

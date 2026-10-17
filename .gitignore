@@ -2,7 +2,7 @@ node_modules/
 .env
 *.log
 recordings/
-venv/
+.venv/
 .venv-voice/
 __pycache__/
 *.pyc

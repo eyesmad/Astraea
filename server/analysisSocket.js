@@ -56,8 +56,9 @@ export function attachAnalysis(httpServer, port) {
             console.log(`Recording capture to ${file}`);
           }
           send({ type: 'ready', recording: Boolean(recorder) });
-        } else if (msg.type === 'face' && Number.isFinite(msg.t)) {
-          if (session.pushFace(msg.t, msg.p)) recorder?.face(msg.t, msg.p);
+        } else if (msg.type === 'faces' && Number.isFinite(msg.t)) {
+          const pFace = msg.faces.find(f => f.primary) || msg.faces[0];
+          if (pFace && session.pushFace(msg.t, pFace.p, msg.mouth)) recorder?.face(msg.t, pFace.p);
         } else if (msg.type === 'reset') {
           session.reset();
         }

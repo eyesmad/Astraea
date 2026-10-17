@@ -97,6 +97,7 @@ SIGNALS = {
     'VOICE_MODEL': {'layer': 'voice', 'label': 'Voice model', 'weight': 0.6},
     'LIP_DRIFT': {'layer': 'crossmodal', 'label': 'Lip-sync drift', 'weight': 0.7},
     'LIP_DECOUPLED': {'layer': 'crossmodal', 'label': 'Lips decoupled from voice', 'weight': 0.5},
+    'PHONEME_MISMATCH': {'layer': 'crossmodal', 'label': 'Lip-reading phoneme mismatch', 'weight': 0.8},
     'SCAM_CONTENT': {'layer': 'content', 'label': 'Scam script match', 'weight': 0.7, 'standing': True},
     'CHALLENGE_FAILED': {'layer': 'challenge', 'label': 'Challenge failed', 'weight': 0.9, 'standing': True},
 }
@@ -106,6 +107,7 @@ SYNERGY = [
     ['VOCODER_ARTIFACT', 'LIP_DRIFT'],
     ['PROSODY_FLAT', 'BREATH_ABSENT'],
     ['VOICE_MODEL', 'LIP_DRIFT'],
+    ['PHONEME_MISMATCH', 'LIP_DRIFT'],
 ]
 
 # --- AudioMetrics ---
@@ -633,6 +635,57 @@ class CrossModal:
                 'bar': clamp(1 - r['peak'] / 0.5, 0, 1) if r else 0
             }
         ]
+
+class PhonemeSync:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.history = []
+
+    def push(self, t, audio_phonemes, video_phonemes, similarity):
+        self.history.append({
+            't': t,
+            'audio': audio_phonemes,
+            'video': video_phonemes,
+            'similarity': similarity
+        })
+        trim_window(self.history, t, 30000)
+
+    def evaluate(self):
+        if not self.history:
+            return []
+        
+        recent = self.history[-1]
+        sim = recent['similarity']
+        
+        fired = sim < 0.6
+        severity = clamp(1.0 - sim, 0.4, 0.9) if fired else 0.0
+        
+        detail = f"Phoneme similarity {sim*100:.1f}%."
+        if fired:
+            detail += f" Mouthed words differ from spoken words. Audio: {' '.join(recent['audio'][:10])}..., Video: {' '.join(recent['video'][:10])}..."
+            
+        return [{
+            'id': 'PHONEME_MISMATCH',
+            'fired': fired,
+            'severity': severity,
+            'detail': detail
+        }]
+
+    def probe(self):
+        if not self.history:
+            return [{
+                'key': 'phoneme', 'label': 'Phoneme sync', 'progress': 0,
+                'text': 'measuring', 'bar': 0
+            }]
+        
+        sim = self.history[-1]['similarity']
+        return [{
+            'key': 'phoneme', 'label': 'Phoneme sync', 'progress': 1,
+            'text': f"{sim*100:.1f}% similarity",
+            'bar': clamp(1.0 - sim, 0, 1)
+        }]
 
 # --- CompoundDetector ---
 class CompoundDetector:
