@@ -19,6 +19,15 @@ if (fs.existsSync(envFile)) {
 }
 
 const app = express();
+app.use(express.json({ limit: '256kb' }));
+app.use(express.urlencoded({ extended: false }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/api/config', (_req, res) => {
+  res.json({
+    ipqs: Boolean(process.env.IPQS_API_KEY),
+    llm: Boolean(process.env.ANTHROPIC_API_KEY),
+    scenarios: SCENARIOS.map((s) => ({ id: s.id, label: s.label, call: s.call })),
   });
 });
 
