@@ -51,6 +51,24 @@ export class CrossModal {
     return { lagMs: (lag / this.hz) * 1000, peak: corr };
   }
 
+  // Live read-out for the overlay. See VideoMetrics.probe for the shape.
+  probe(now) {
+    const r = this.measure(now);
+    const span = Math.min(this.mouth.length, this.audio.length) ? this.windowMs : 0;
+    return [
+      {
+        key: 'sync', label: 'Lip-sync offset', progress: r ? 1 : clamp(span / this.windowMs, 0, 1) * (this.mouth.length && this.audio.length ? 0.6 : 0),
+        text: r ? `${r.lagMs >= 0 ? 'audio behind' : 'audio ahead'} ${Math.abs(r.lagMs).toFixed(0)} ms` : 'needs a speaking face and audible voice',
+        bar: r ? clamp(Math.abs(r.lagMs) / 400, 0, 1) : 0,
+      },
+      {
+        key: 'corr', label: 'Lip/voice correlation', progress: r ? 1 : 0,
+        text: r ? r.peak.toFixed(2) : 'measuring',
+        bar: r ? clamp(1 - r.peak / 0.5, 0, 1) : 0,
+      },
+    ];
+  }
+
   evaluate(now) {
     const r = this.measure(now);
     if (!r) return [];

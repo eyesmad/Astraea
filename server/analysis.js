@@ -85,6 +85,11 @@ export class AnalysisSession {
     return [...this.video.evaluate(), ...this.audio.evaluate(), ...this.cross.evaluate(this.now)];
   }
 
+  // Live numeric read-outs grouped by layer, for the overlay's "what is being analysed" panel.
+  probes() {
+    return { video: this.video.probe(), voice: this.audio.probe(), crossmodal: this.cross.probe(this.now) };
+  }
+
   get frames() {
     return this.video.frames;
   }

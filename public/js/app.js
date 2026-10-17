@@ -61,6 +61,24 @@ function report(id, r, now = performance.now()) {
   if (fired && !prev?.fired) log(`${SIGNALS[id].label}: ${r.detail}`);
 }
 
+// Live numeric read-outs for the overlay, from whichever side is doing the analysis.
+function liveProbes() {
+  if (!stream) return null;
+  if (remote.active) return remote.probes;
+  return { video: videoMetrics.probe(), voice: audio.metrics.probe(), crossmodal: crossModal.probe(performance.now()) };
+}
+
+function probeHtml(rows) {
+  if (!rows?.length) return '';
+  return `<div class="probes">${rows.map((p) => {
+    const warming = p.progress < 1;
+    const width = Math.round(100 * (warming ? p.progress : Math.max(p.bar, 0.02)));
+    const cls = warming ? 'warming' : p.bar >= 0.66 ? 'hot' : p.bar >= 0.33 ? 'mid' : 'cool';
+    return `<div class="probe"><span class="plabel">${esc(p.label)}</span><span class="pval">${esc(p.text)}</span>` +
+      `<div class="meter ${cls}" title="${warming ? `Collecting data (${Math.round(p.progress * 100)}%)` : 'Live reading'}"><i style="width:${width}%"></i></div></div>`;
+  }).join('')}</div>`;
+}
+
 function activeSignals() {
   return [...sigState].filter(([, s]) => s.fired).map(([id, s]) => ({ id, severity: s.severity }));
 }
@@ -89,6 +107,13 @@ function render(now) {
     alert.hidden = true;
   }
 
+  const probes = liveProbes();
+  const engine = $('#engine');
+  engine.hidden = !stream;
+  if (stream) {
+    engine.className = `engine ${remote.active ? '' : 'local'}`;
+    engine.textContent = remote.active ? 'Analysing on the server' : 'Analysing in this browser';
+  }
   $('#groups').innerHTML = Object.entries(LAYERS).map(([layer, meta]) => {
     const rows = Object.entries(SIGNALS).filter(([, d]) => d.layer === layer).map(([id, def]) => {
       const s = sigState.get(id);
@@ -96,7 +121,7 @@ function render(now) {
       const detail = s?.detail ? `<div class="detail">${esc(s.detail)}</div>` : '';
       return `<div class="sig ${cls}"><span class="led"></span><div><div class="name">${esc(def.label)}</div>${detail}</div></div>`;
     }).join('');
-    return `<div class="group"><h4>${esc(meta.label)} &middot; ${esc(meta.question)}</h4>${rows}</div>`;
+    return `<div class="group"><h4>${esc(meta.label)} &middot; ${esc(meta.question)}</h4>${probeHtml(probes?.[layer])}${rows}</div>`;
   }).join('');
 
   renderScam();

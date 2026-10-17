@@ -25,7 +25,7 @@ export function attachAnalysis(httpServer, port) {
   wss.on('connection', (ws) => {
     let session = new AnalysisSession();
     const send = (obj) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(obj));
-    const timer = setInterval(() => send({ type: 'signals', results: session.evaluate(), frames: session.frames }), 1000);
+    const timer = setInterval(() => send({ type: 'signals', results: session.evaluate(), probes: session.probes(), frames: session.frames }), 1000);
 
     ws.on('message', (data, isBinary) => {
       try {

@@ -213,3 +213,61 @@ test('gestures on synthetic hands', () => {
   assert.equal(isTouchingNose(near, f, 1), true);
   assert.equal(isTouchingNose(hand(), f, 1), false);
 });
+
+// Head turning, as it looks to the pose vector: the vector is centred and divided by eye distance, so
+// translation cancels and what remains is the geometric foreshortening of a yaw/pitch change.
+let noiseSeed = 99;
+const noise = () => ((noiseSeed = (noiseSeed * 48271) % 2147483647) / 2147483647 - 0.5);
+
+function turningFace(yaw, pitch, jitter) {
+  const c = Math.cos(yaw);
+  return face(0.3, 0.05, 0).map((p) => ({
+    x: 0.5 + (p.x - 0.5) * c + jitter * noise(),
+    y: p.y + pitch + jitter * noise(),
+    z: 0,
+  }));
+}
+
+// `dropEvery` simulates MediaPipe returning nothing because the video frame has not advanced.
+function runMotion({ jitter, dropEvery = 0, seconds = 8 }) {
+  const vm = new VideoMetrics();
+  let frame = 0;
+  for (let t = 0; t < seconds * 1000; t += 33) {
+    frame++;
+    if (dropEvery && frame % dropEvery === 0) continue;
+    const yaw = 0.6 * Math.sin((2 * Math.PI * t) / 1000);
+    vm.push(t, turningFace(yaw, 0.02 * Math.sin((2 * Math.PI * t) / 1700), jitter), null);
+  }
+  return vm;
+}
+
+test('MOTION_SMOOTHNESS: a moving head with dropped frames is not flagged', () => {
+  const vm = runMotion({ jitter: 0.0006, dropEvery: 5 });
+  const r = vm.evaluate().find((x) => x.id === 'MOTION_SMOOTHNESS');
+  assert.ok(r, 'signal is evaluated');
+  assert.equal(r.fired, false, r.detail);
+  // The gaps are real and would wreck an unfiltered second difference, so the filter must be doing the work.
+  assert.ok(vm.jitterStats().dropped > 10, 'frames were actually dropped');
+});
+
+test('MOTION_SMOOTHNESS: per-frame landmark flicker is flagged', () => {
+  const r = runMotion({ jitter: 0.02 }).evaluate().find((x) => x.id === 'MOTION_SMOOTHNESS');
+  assert.equal(r.fired, true, r.detail);
+  assert.ok(r.detail.includes('flickers'));
+});
+
+test('MOTION_SMOOTHNESS: still frames do not fire on noise ratio alone', () => {
+  const vm = new VideoMetrics();
+  for (let t = 0; t < 8000; t += 33) vm.push(t, turningFace(0, 0, 0.0006), null);
+  const r = vm.evaluate().find((x) => x.id === 'MOTION_SMOOTHNESS');
+  assert.equal(r.fired, false, r.detail);
+});
+
+test('probes report readiness before a signal can be judged', () => {
+  const vm = runMotion({ jitter: 0.0006, seconds: 3 });
+  const p = Object.fromEntries(vm.probe().map((x) => [x.key, x]));
+  assert.equal(p.blink.progress < 1, true);
+  assert.equal(p.jitter.progress, 1);
+  assert.ok(p.jitter.text.includes('ratio'));
+  assert.ok(p.face.text.includes('fps'));
+});

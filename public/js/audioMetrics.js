@@ -77,6 +77,37 @@ export class AudioMetrics {
     return this.speechMs.reduce((a, s) => a + s.v, 0) / 1000;
   }
 
+  // Live read-out for the overlay. See VideoMetrics.probe for the shape.
+  probe() {
+    const spread = this.f0.length >= 20 ? robustStd(this.f0.map((p) => p.v)) : null;
+    const frac = this.cliff.length >= 10 ? this.cliff.reduce((a, c) => a + c.v, 0) / this.cliff.length : null;
+    const coupled = this.onsets.filter((o) => this.breaths.some((b) => o - b >= 0 && o - b < 900)).length;
+    const coupling = this.onsets.length ? coupled / this.onsets.length : null;
+    const secs = this.speechSeconds;
+    return [
+      {
+        key: 'speech', label: 'Speech heard', progress: clamp(secs / 15, 0, 1),
+        text: `${secs.toFixed(1)} s over ${this.onsets.length} phrases`,
+        bar: 0,
+      },
+      {
+        key: 'pitch', label: 'Pitch variation', progress: clamp(this.f0.length / 100, 0, 1),
+        text: spread == null ? 'measuring' : `${spread.toFixed(1)} semitones`,
+        bar: spread == null ? 0 : clamp(1 - spread / 2.5, 0, 1),
+      },
+      {
+        key: 'cliff', label: 'Spectral cutoff', progress: clamp(this.cliff.length / 50, 0, 1),
+        text: frac == null ? 'measuring' : `${(frac * 100).toFixed(0)}% of voiced frames cut off above 5 kHz`,
+        bar: frac == null ? 0 : clamp(frac, 0, 1),
+      },
+      {
+        key: 'breath', label: 'Breaths before phrases', progress: Math.min(clamp(secs / 15, 0, 1), clamp(this.onsets.length / 4, 0, 1)),
+        text: coupling == null ? 'measuring' : `${(coupling * 100).toFixed(0)}% of phrases preceded by a breath`,
+        bar: coupling == null ? 0 : clamp(1 - coupling / 0.4, 0, 1),
+      },
+    ];
+  }
+
   evaluate() {
     const out = [];
 

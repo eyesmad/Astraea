@@ -426,6 +426,84 @@ textarea {
   font-weight: 600;
 }
 
+.engine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.engine::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.engine.local::before {
+  background: var(--warn);
+}
+
+.probes {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 7px 0 2px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid rgba(255, 255, 255, .06);
+}
+
+.probe {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+}
+
+.probe .plabel {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.probe .pval {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  color: #c9d3e6;
+}
+
+.probe .meter {
+  grid-column: 1 / -1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .07);
+  overflow: hidden;
+}
+
+.probe .meter i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  transition: width .4s ease;
+}
+
+.probe .meter.warming i {
+  background: repeating-linear-gradient(90deg, #4a5774 0 4px, transparent 4px 8px);
+}
+
+.probe .meter.cool i {
+  background: var(--ok);
+}
+
+.probe .meter.mid i {
+  background: var(--warn);
+}
+
+.probe .meter.hot i {
+  background: var(--bad);
+}
+
 .sig {
   display: grid;
   grid-template-columns: 12px 1fr;

@@ -10,6 +10,7 @@ export class RemoteAnalysis {
     this.ws = null;
     this.ctx = null;
     this.frames = 0;
+    this.probes = null;
   }
 
   get active() {
@@ -33,6 +34,7 @@ export class RemoteAnalysis {
           const m = JSON.parse(e.data);
           if (m.type === 'signals') {
             this.frames = m.frames;
+            this.probes = m.probes;
             this.onSignals?.(m.results);
           }
         };
@@ -82,5 +84,6 @@ export class RemoteAnalysis {
     this.ws = null;
     if (ws) { ws.onclose = null; ws.close(); }
     this.frames = 0;
+    this.probes = null;
   }
 }

@@ -18,6 +18,16 @@ export const BLEND_KEYS = [
   'browInnerUp', 'eyeSquintLeft', 'eyeSquintRight', 'mouthFrownLeft', 'mouthFrownRight', 'cheekPuff', 'mouthPucker',
 ];
 
+// MOTION_SMOOTHNESS thresholds. For white landmark noise of standard deviation s (in eye-distance units),
+// rms(second difference) is s*sqrt(6) and rms(first difference) is s*sqrt(2), so their ratio tends to sqrt(3)
+// = 1.73; smooth real head motion sits well below that because velocity dominates acceleration over 33 ms.
+// JITTER_FLOOR therefore says "how much flicker", the ratio says "is it flicker rather than real movement",
+// and MIN_MOTION requires the face to actually be moving before either is judged.
+// These need calibrating against real call footage; the live read-out in the overlay shows the measured values.
+export const JITTER_FLOOR = 0.025;
+export const NOISE_RATIO = 1.55;
+export const MIN_MOTION = 0.004;
+
 export function eyeAspect(lm, ids) {
   const [p1, p2, p3, p4, p5, p6] = ids.map((i) => lm[i]);
   return (dist(p2, p6) + dist(p3, p5)) / (2 * dist(p1, p4) || 1);
@@ -105,6 +115,77 @@ export class VideoMetrics {
     return std(iv) / (mean(iv) || 1);
   }
 
+  // Flicker of facial geometry relative to head pose. Only consecutive, regularly spaced frames are used:
+  // MediaPipe returns nothing when the video frame has not advanced, and a second difference taken across a
+  // dropped frame is meaningless (it reads as a large spike), which on its own fired this signal constantly.
+  jitterStats() {
+    const p = this.pose;
+    if (p.length < 45) return null;
+    const dts = [];
+    for (let i = 1; i < p.length; i++) dts.push(p[i].t - p[i - 1].t);
+    const md = median(dts);
+    if (!(md > 0)) return null;
+    const k = p[0].v.length;
+    let jitter = 0;
+    let vel = 0;
+    let n = 0;
+    for (let i = 2; i < p.length; i++) {
+      const gapA = p[i - 1].t - p[i - 2].t;
+      const gapB = p[i].t - p[i - 1].t;
+      if (gapA < md * 0.6 || gapA > md * 1.6 || gapB < md * 0.6 || gapB > md * 1.6) continue;
+      for (let c = 0; c < k; c++) {
+        const d2 = p[i].v[c] - 2 * p[i - 1].v[c] + p[i - 2].v[c];
+        jitter += d2 * d2;
+        const d1 = p[i].v[c] - p[i - 1].v[c];
+        vel += d1 * d1;
+      }
+      n++;
+    }
+    if (n < 30) return null;
+    const jr = Math.sqrt(jitter / n / k);
+    const vr = Math.sqrt(vel / n / k);
+    return { jr, vr, ratio: vr > 0 ? jr / vr : 0, n, dropped: dts.filter((d) => d > md * 1.6).length, fps: 1000 / md };
+  }
+
+  // Live read-out for the overlay: what each video probe currently measures, and how close it is to having
+  // enough data to judge. `progress` 1 means the signal is being evaluated; `bar` is 0 (normal) to 1 (worst).
+  probe() {
+    const obs = this.observedMs;
+    const js = this.jitterStats();
+    const rate = this.blinkRate();
+    const cv = this.blinkIntervalCV();
+    const blendMs = this.blend.length ? this.blend[this.blend.length - 1].t - this.blend[0].t : 0;
+    let expr = null;
+    if (this.blend.length >= 20) {
+      const k = this.blend[0].v.length;
+      const sds = [];
+      for (let c = 0; c < k; c++) sds.push(std(this.blend.map((b) => b.v[c])));
+      expr = mean(sds);
+    }
+    return [
+      {
+        key: 'face', label: 'Face tracking', progress: this.frames ? 1 : 0,
+        text: this.frames ? `${this.frames} frames${js ? ` at ${js.fps.toFixed(0)} fps, ${js.dropped} gaps` : ''}` : 'waiting for a face',
+        bar: 0,
+      },
+      {
+        key: 'blink', label: 'Blink cadence', progress: clamp(obs / 25000, 0, 1),
+        text: obs >= 25000 ? `${rate.toFixed(0)} blinks/min${cv != null ? `, variation ${cv.toFixed(2)}` : ''}` : `${this.blinks.length} blinks so far`,
+        bar: clamp(1 - rate / 18, 0, 1),
+      },
+      {
+        key: 'jitter', label: 'Landmark jitter', progress: js ? 1 : clamp(this.pose.length / 45, 0, 1),
+        text: js ? `${(js.jr * 1000).toFixed(1)} jitter vs ${(js.vr * 1000).toFixed(1)} motion, ratio ${js.ratio.toFixed(2)}` : 'measuring',
+        bar: js ? clamp(js.jr / (JITTER_FLOOR * 2), 0, 1) : 0,
+      },
+      {
+        key: 'expr', label: 'Expression variance', progress: Math.min(clamp(this.blend.length / 150, 0, 1), clamp(blendMs / 9000, 0, 1)),
+        text: expr == null ? 'measuring' : `${(expr * 100).toFixed(2)}% average movement`,
+        bar: expr == null ? 0 : clamp(1 - expr / 0.02, 0, 1),
+      },
+    ];
+  }
+
   evaluate() {
     const out = [];
     const obs = this.observedMs;
@@ -132,33 +213,16 @@ export class VideoMetrics {
       out.push({ id: 'BLINK_CADENCE', fired, severity, detail });
     }
 
-    // MOTION_SMOOTHNESS: second-difference jitter of face geometry relative to head pose, plus frozen-face check.
-    if (this.pose.length >= 45) {
-      const p = this.pose;
-      let jitter = 0;
-      let vel = 0;
-      let n = 0;
-      for (let i = 2; i < p.length; i++) {
-        let j = 0;
-        let w = 0;
-        for (let k = 0; k < p[i].v.length; k++) {
-          const d2 = p[i].v[k] - 2 * p[i - 1].v[k] + p[i - 2].v[k];
-          j += d2 * d2;
-          const d1 = p[i].v[k] - p[i - 1].v[k];
-          w += d1 * d1;
-        }
-        jitter += j;
-        vel += w;
-        n++;
-      }
-      const jr = Math.sqrt(jitter / n / p[0].v.length);
-      const vr = Math.sqrt(vel / n / p[0].v.length);
+    // MOTION_SMOOTHNESS
+    const js = this.jitterStats();
+    if (js && this.observedMs >= 5000) {
+      const { jr, vr, ratio } = js;
       let fired = false;
       let severity = 0;
-      let detail = `Landmark jitter ${(jr * 1000).toFixed(1)}, motion ${(vr * 1000).toFixed(1)} (per-mille of eye distance).`;
-      if (jr > 0.012) {
+      let detail = `Landmark jitter ${(jr * 1000).toFixed(1)}, motion ${(vr * 1000).toFixed(1)}, noise ratio ${ratio.toFixed(2)} (per-mille of eye distance).`;
+      if (jr > JITTER_FLOOR && ratio > NOISE_RATIO && vr > MIN_MOTION) {
         fired = true;
-        severity = clamp(0.4 + (jr - 0.012) * 30, 0.4, 0.9);
+        severity = clamp(0.4 + (jr - JITTER_FLOOR) * 20, 0.4, 0.9);
         detail += ' Facial geometry flickers between frames.';
       } else if (vr < 0.0003 && this.observedMs > 8000) {
         fired = true;
