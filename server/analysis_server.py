@@ -24,6 +24,7 @@ MAX_CHUNK_SAMPLES = 48000
 TICK_SECONDS = 1.0
 
 import logging
+import math
 import time
 
 from analysis_metrics import (
@@ -60,6 +61,8 @@ class AnalysisSession:
         self.last_frame_t = 0
         self.f0 = {'f0': 0.0, 'clarity': 0.0}
         self.drop = {'dropDb': 0.0, 'atHz': 0.0}
+        self.faces = 0
+        self.audio_buf = np.zeros(0, dtype=np.float32)
 
     def push_audio(self, samples, end_t):
         end_idx = self.total + len(samples)
@@ -69,9 +72,6 @@ class AnalysisSession:
         else:
             self.offset = min(off, self.offset + 0.02)
             
-        if not hasattr(self, 'audio_buf'):
-            self.audio_buf = np.zeros(0, dtype=np.float32)
-            
         self.audio_buf = np.concatenate((self.audio_buf, samples))
         
         while self.since_hop + len(samples) >= self.hop:
@@ -80,21 +80,20 @@ class AnalysisSession:
             samples = samples[consume:]
             self.since_hop = 0
             
-            if self.total >= self.fft_size:
-                frame_end_idx = len(self.audio_buf) - len(samples)
+            frame_end_idx = len(self.audio_buf) - len(samples)
+            if frame_end_idx >= self.fft_size:
                 frame = self.audio_buf[frame_end_idx - self.fft_size : frame_end_idx]
-                self._frame(self.offset + (self.total / self.sr) * 1000.0)
+                self._frame(self.offset + (self.total / self.sr) * 1000.0, frame)
         
         self.total += len(samples)
         self.since_hop += len(samples)
         
-        if len(self.audio_buf) > self.fft_size * 2:
-            self.audio_buf = self.audio_buf[-self.fft_size:]
+        # Keep enough history for the next window plus the chunk that will be appended to it.
+        if len(self.audio_buf) > self.fft_size * 3:
+            self.audio_buf = self.audio_buf[-(self.fft_size * 2):]
 
-    def _frame(self, t):
+    def _frame(self, t, frame):
         n = self.fft_size
-        start = self.total % n
-        frame = np.concatenate((self.ring[start:], self.ring[:start]))
         level = rms(frame)
         self.cross.push_audio(t, level)
         self.now = max(self.now, t)
@@ -170,13 +169,15 @@ async def handler(websocket):
                 await asyncio.sleep(TICK_SECONDS)
                 # evaluate() is CPU-bound; a thread keeps the socket responsive while it runs.
                 results, probes = await asyncio.to_thread(lambda: (session.evaluate(), session.probes()))
+                # NumpyEncoder exists for exactly this: numpy bools and floats reach here from the
+                # metrics and json.dumps refuses them without it.
                 await websocket.send(json.dumps({
                     "type": "signals",
                     "results": results,
                     "probes": probes,
                     "frames": session.frames,
                     "faces": session.faces,
-                }))
+                }, cls=NumpyEncoder))
         except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
             pass
         except Exception as e:
