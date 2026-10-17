@@ -13,12 +13,13 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/eyesmad/NohoDihs/issues"
   },
   "homepage": "https://github.com/eyesmad/NohoDihs#readme",
   "dependencies": {
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "ws": "^8.22.0"
   }
 }
