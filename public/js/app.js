@@ -236,25 +236,48 @@ function toggleSpeech() {
 }
 
 // ---------- capture (part 2 and 3) ----------
-async function startCapture(kind) {
+async function startCapture(kind, file = null) {
   try {
     stopCapture();
-    stream = kind === 'screen'
-      ? await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true })
-      : await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, frameRate: 30 }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    let srcUrl = null;
+
+    if (kind === 'screen') {
+      stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 30 }, audio: true });
+    } else if (kind === 'cam') {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480, frameRate: 30 }, audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    } else if (kind === 'file') {
+      srcUrl = URL.createObjectURL(file);
+    }
+
     const v = $('#preview');
-    v.srcObject = stream;
+    if (srcUrl) {
+      v.src = srcUrl;
+      v.muted = false;
+    } else {
+      v.srcObject = stream;
+      v.muted = true;
+    }
     v.classList.add('live');
+    v.loop = kind === 'file';
     await v.play();
-    stream.getTracks()[0].addEventListener('ended', stopCapture);
+
+    if (kind === 'file') {
+      stream = v.captureStream ? v.captureStream() : (v.mozCaptureStream ? v.mozCaptureStream() : null);
+      if (!stream) throw new Error('Video stream capture not supported in this browser.');
+    }
+
+    if (stream && stream.getTracks()[0]) {
+      stream.getTracks()[0].addEventListener('ended', stopCapture);
+    }
+
     $('#btnStop').disabled = false;
     $('#srcStatus').textContent = 'Loading MediaPipe models...';
     if (!vision.face) await vision.init();
-    const hasAudio = await audio.start(stream);
+    const hasAudio = stream ? await audio.start(stream) : false;
     if (!hasAudio) log('No audio track was shared. Voice and lip-sync checks are off. Tick "Share audio" when picking a tab.');
     t0 = performance.now();
     visionTimer = setInterval(visionStep, 33);
-    log(`Capture started (${kind === 'screen' ? 'shared window' : 'webcam'}).`);
+    log(`Capture started (${kind === 'screen' ? 'shared window' : kind === 'cam' ? 'webcam' : 'video file'}).`);
   } catch (err) {
     $('#srcStatus').textContent = `Could not start: ${err.message}`;
     stopCapture();
@@ -269,6 +292,10 @@ function stopCapture() {
   stream = null;
   const v = $('#preview');
   v.srcObject = null;
+  if (v.src) {
+    URL.revokeObjectURL(v.src);
+    v.removeAttribute('src');
+  }
   v.classList.remove('live');
   $('#btnStop').disabled = true;
 }
@@ -467,6 +494,11 @@ async function init() {
   });
   $('#btnScreen').addEventListener('click', () => startCapture('screen'));
   $('#btnCam').addEventListener('click', () => startCapture('cam'));
+  $('#btnVideoFile').addEventListener('click', () => $('#fileUpload').click());
+  $('#fileUpload').addEventListener('change', (e) => {
+    if (e.target.files.length) startCapture('file', e.target.files[0]);
+    e.target.value = '';
+  });
   $('#btnStop').addEventListener('click', stopCapture);
   $('#btnClassify').addEventListener('click', classifyNow);
   $('#btnSpeech').addEventListener('click', toggleSpeech);
