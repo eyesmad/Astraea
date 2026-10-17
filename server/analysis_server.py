@@ -69,16 +69,27 @@ class AnalysisSession:
         else:
             self.offset = min(off, self.offset + 0.02)
             
-        for s in samples:
-            self.ring[self.total % self.fft_size] = s
-            self.total += 1
-            if self.filled < self.fft_size:
-                self.filled += 1
-            self.since_hop += 1
-            if self.since_hop >= self.hop:
-                self.since_hop = 0
-                if self.filled == self.fft_size:
-                    self._frame(self.offset + (self.total / self.sr) * 1000.0)
+        if not hasattr(self, 'audio_buf'):
+            self.audio_buf = np.zeros(0, dtype=np.float32)
+            
+        self.audio_buf = np.concatenate((self.audio_buf, samples))
+        
+        while self.since_hop + len(samples) >= self.hop:
+            consume = self.hop - self.since_hop
+            self.total += consume
+            samples = samples[consume:]
+            self.since_hop = 0
+            
+            if self.total >= self.fft_size:
+                frame_end_idx = len(self.audio_buf) - len(samples)
+                frame = self.audio_buf[frame_end_idx - self.fft_size : frame_end_idx]
+                self._frame(self.offset + (self.total / self.sr) * 1000.0)
+        
+        self.total += len(samples)
+        self.since_hop += len(samples)
+        
+        if len(self.audio_buf) > self.fft_size * 2:
+            self.audio_buf = self.audio_buf[-self.fft_size:]
 
     def _frame(self, t):
         n = self.fft_size
@@ -136,6 +147,18 @@ class AnalysisSession:
     def frames(self):
         return self.video.frames
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NumpyEncoder, self).default(obj)
+
 async def handler(websocket):
     session = AnalysisSession()
     recorder = None
@@ -156,6 +179,8 @@ async def handler(websocket):
                 }))
         except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
             pass
+        except Exception as e:
+            logging.error(f"Error in send_updates task: {e}", exc_info=True)
 
     task = asyncio.create_task(send_updates())
 
@@ -213,6 +238,8 @@ async def handler(websocket):
 
     except websockets.exceptions.ConnectionClosed:
         pass
+    except Exception as e:
+        logging.error(f"Error in websocket loop: {e}", exc_info=True)
     finally:
         task.cancel()
         if recorder:
