@@ -1,0 +1,3 @@
+# Analysis server (server/analysis_server.py), started alongside the Node server by `npm start`.
+numpy
+websockets
