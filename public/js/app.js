@@ -1,9 +1,10 @@
 import { SIGNALS, LAYERS, LIVE_TTL_MS } from './signals.js';
-import { CompoundDetector, computeTrust, trustLabel } from './compound.js';
+import { CompoundDetector, TrustLedger, trustLabel } from './compound.js';
 import { VideoMetrics, mouthAperture } from './videoMetrics.js';
 import { AudioAnalyzer } from './audioAnalyzer.js';
 import { CrossModal } from './crossmodal.js';
 import { RemoteAnalysis, recordLabel } from './remote.js';
+import { FaceTracker, drawMarkers } from './faceMarkers.js';
 import { Vision } from './vision.js';
 import { CHALLENGES, pickChallenge } from './gestures.js';
 
@@ -18,6 +19,9 @@ const videoMetrics = new VideoMetrics();
 const crossModal = new CrossModal();
 const audio = new AudioAnalyzer({ onEnvelope: (t, v) => crossModal.pushAudio(t, v) });
 const vision = new Vision();
+const ledger = new TrustLedger();
+const faceTracker = new FaceTracker();
+let trackedFaces = [];
 // Audio features, face metrics and cross-modal sync run on the server; the local classes above are the fallback
 // when the analysis socket cannot be reached.
 const remote = new RemoteAnalysis({
@@ -86,10 +90,14 @@ function activeSignals() {
 // ---------- rendering ----------
 function render(now) {
   const markerActive = marker && now < markerUntil;
-  const trust = computeTrust(activeSignals(), markerActive ? marker.strength : 0);
+  const live = activeSignals().filter(({ id }) => !SIGNALS[id].standing);
+  const standing = activeSignals().filter(({ id }) => SIGNALS[id].standing);
+  ledger.observe(live, now);
+  const trust = ledger.trust(standing);
   const lab = trustLabel(trust);
   $('#trustPct').textContent = pct(trust);
   $('#trustLabel').textContent = sigState.size || stream ? lab.text : 'Waiting for a call';
+  renderTrustSub(trust, live.length);
   const tr = $('.trust');
   tr.classList.remove('ok', 'warn', 'bad');
   tr.classList.add(lab.key);
@@ -130,6 +138,21 @@ function render(now) {
 
   renderScam();
   renderChallenge(trust, now);
+  if (now - lastFaceT > 1500) trackedFaces = [];
+  drawMarkers($('#markers'), $('#preview'), trackedFaces, { label: lab.text, tone: lab.key });
+}
+
+// The score is cumulative, so say what it is built from: otherwise a low score with nothing currently
+// firing looks like a bug rather than the memory of what was seen earlier in the call.
+function renderTrustSub(trust, liveCount) {
+  const el = $('#trustSub');
+  const top = ledger.summary().slice(0, 2).filter((e) => e.contribution > 0.02);
+  if (!top.length) {
+    el.textContent = stream ? 'No evidence against this call yet.' : '';
+    return;
+  }
+  const names = top.map((e) => `${SIGNALS[e.id].label}${e.score < 0.35 ? ' (fading)' : ''}`).join(', ');
+  el.textContent = `${liveCount ? 'Now' : 'Earlier'}: ${names}`;
 }
 
 function renderScam() {
@@ -161,7 +184,10 @@ function tick() {
       for (const r of crossModal.evaluate(now)) report(r.id, r, now);
     }
     const frames = remote.active ? remote.frames : videoMetrics.frames;
-    $('#srcStatus').textContent = now - lastFaceT > 3000 ? 'No face detected in the shared video.' : `Tracking face (${frames} frames${remote.active ? ', analysed on server' : ''}).`;
+    const n = trackedFaces.length;
+    $('#srcStatus').textContent = now - lastFaceT > 3000
+      ? 'No face detected in the shared video.'
+      : `Tracking ${n > 1 ? `${n} faces, analysing the largest` : 'face'} (${frames} frames${remote.active ? ', analysed on server' : ''}).`;
   }
   for (const [id, s] of sigState) {
     if (!SIGNALS[id].standing && s.fired && now - s.t > LIVE_TTL_MS) report(id, { fired: false }, now);
@@ -360,10 +386,11 @@ function visionStep() {
   const t = performance.now();
   const res = vision.detect($('#preview'), t, challenge?.state === 'running');
   if (!res) return;
+  trackedFaces = faceTracker.update(res.faces, t);
   if (res.face) {
     lastFaceT = t;
     if (remote.active) {
-      remote.sendFace(t, res.face, res.blend);
+      remote.sendFaces(t, trackedFaces);
     } else {
       videoMetrics.push(t, res.face, res.blend);
       crossModal.pushMouth(t, mouthAperture(res.face));
@@ -463,6 +490,9 @@ function resetAll() {
   compound.reset();
   videoMetrics.reset();
   crossModal.reset();
+  ledger.reset();
+  faceTracker.reset();
+  trackedFaces = [];
   audio.metrics.reset();
   remote.reset();
   marker = null;

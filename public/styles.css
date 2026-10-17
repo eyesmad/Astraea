@@ -194,6 +194,35 @@ textarea {
   font-size: 12px;
 }
 
+.stagewrap {
+  position: relative;
+  margin-top: 12px;
+  line-height: 0;
+}
+
+.stagewrap #preview {
+  margin-top: 0;
+}
+
+.markers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: none;
+}
+
+.stagewrap:has(#preview.live) .markers {
+  display: block;
+}
+
+.trust-sub {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
 #preview {
   width: 100%;
   max-height: 220px;

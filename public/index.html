@@ -69,7 +69,10 @@
         <button id="btnStop" disabled>Stop</button>
         <span class="status" id="srcStatus"></span>
       </div>
-      <video id="preview" muted playsinline></video>
+      <div class="stagewrap">
+        <video id="preview" muted playsinline></video>
+        <canvas id="markers" class="markers"></canvas>
+      </div>
     </section>
 
     <section class="card" id="cardContent">
@@ -107,6 +110,7 @@
         <div class="trust-text">
           <div class="trust-pct" id="trustPct">100</div>
           <div class="trust-label" id="trustLabel">Waiting for a call</div>
+          <div class="trust-sub" id="trustSub"></div>
         </div>
       </section>
 

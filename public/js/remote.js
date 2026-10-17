@@ -46,6 +46,7 @@ export class RemoteAnalysis {
           } else if (m.type === 'signals') {
             this.frames = m.frames;
             this.probes = m.probes;
+            this.faces = m.faces ?? 0;
             this.onSignals?.(m.results);
           }
         };
@@ -80,8 +81,15 @@ export class RemoteAnalysis {
     this.ws.send(buf);
   }
 
-  sendFace(t, lm, blend) {
-    if (this.active) this.ws.send(JSON.stringify({ type: 'face', t, p: packFace(lm, blend) }));
+  // Every visible face goes up so the server can report how many are present; the primary one, which the
+  // tracker keeps stable across frames, is the one its metrics follow.
+  sendFaces(t, faces) {
+    if (!this.active || !faces.length) return;
+    this.ws.send(JSON.stringify({
+      type: 'faces',
+      t,
+      faces: faces.map((f) => ({ id: f.id, primary: f.primary, t, p: packFace(f.lm, f.blend) })),
+    }));
   }
 
   reset() {

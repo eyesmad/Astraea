@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { crossCorrelate, resample, zscore } from '../public/js/crosscorr.js';
 import { CrossModal } from '../public/js/crossmodal.js';
-import { CompoundDetector, computeTrust } from '../public/js/compound.js';
+import { CompoundDetector, computeTrust, TrustLedger } from '../public/js/compound.js';
+import { SIGNALS } from '../public/js/signals.js';
+import { FaceTracker } from '../public/js/faceMarkers.js';
 import { estimateF0, brickwallDrop, rms } from '../public/js/audioFeatures.js';
 import { AudioMetrics } from '../public/js/audioMetrics.js';
 import { VideoMetrics } from '../public/js/videoMetrics.js';
@@ -270,4 +272,105 @@ test('probes report readiness before a signal can be judged', () => {
   assert.equal(p.jitter.progress, 1);
   assert.ok(p.jitter.text.includes('ratio'));
   assert.ok(p.face.text.includes('fps'));
+});
+
+// --- cumulative trust ---
+
+function runLedger(ledger, firing, seconds, startT = 0, stepMs = 1000) {
+  let t = startT;
+  for (let i = 0; i < seconds; i++) {
+    ledger.observe(firing, t);
+    t += stepMs;
+  }
+  return t;
+}
+
+test('TrustLedger keeps the score down after a signal stops firing', () => {
+  const l = new TrustLedger();
+  const t = runLedger(l, [{ id: 'LIP_DRIFT', severity: 0.8 }], 20);
+  const during = l.trust();
+  assert.ok(during < 0.5, `trust during evidence was ${during}`);
+
+  // Nothing firing for 10 s: the score must not snap back to clean.
+  l.observe([], t + 10000);
+  const after = l.trust();
+  assert.ok(after < 0.65, `trust right after evidence was ${after}`);
+  assert.ok(after > during, 'it should recover somewhat');
+});
+
+test('TrustLedger decays a single blip to near-clean over several half-lives', () => {
+  const l = new TrustLedger({ halfLifeMs: 1000 });
+  l.observe([{ id: 'LIP_DRIFT', severity: 0.8 }], 0);
+  const spike = l.trust();
+  assert.ok(spike < 1);
+  l.observe([], 12000);
+  assert.ok(l.trust() > 0.98, `a lone blip should fade, got ${l.trust()}`);
+});
+
+test('TrustLedger compounds sustained evidence beyond a single observation', () => {
+  const brief = new TrustLedger();
+  brief.observe([{ id: 'BLINK_CADENCE', severity: 0.6 }], 0);
+  const sustained = new TrustLedger();
+  runLedger(sustained, [{ id: 'BLINK_CADENCE', severity: 0.6 }], 15);
+  assert.ok(sustained.trust() < brief.trust() - 0.1, 'sustained evidence must weigh more than one tick');
+});
+
+test('TrustLedger applies standing signals at full weight without accumulating them', () => {
+  const l = new TrustLedger();
+  l.observe([], 0);
+  const withStanding = l.trust([{ id: 'CALLER_AUTH', severity: 1 }]);
+  assert.ok(Math.abs(withStanding - (1 - SIGNALS.CALLER_AUTH.weight)) < 1e-9);
+  assert.equal(l.trust(), 1, 'standing signals are not added to the ledger');
+});
+
+test('TrustLedger summary ranks the strongest evidence first', () => {
+  const l = new TrustLedger();
+  runLedger(l, [{ id: 'LIP_DRIFT', severity: 0.9 }, { id: 'EXPRESSION_FLAT', severity: 0.3 }], 10);
+  const s = l.summary();
+  assert.equal(s[0].id, 'LIP_DRIFT');
+  assert.ok(s[0].contribution > s[1].contribution);
+  assert.ok(s[0].seconds >= 9);
+});
+
+test('TrustLedger resets', () => {
+  const l = new TrustLedger();
+  runLedger(l, [{ id: 'LIP_DRIFT', severity: 0.9 }], 5);
+  l.reset();
+  assert.equal(l.trust(), 1);
+  assert.deepEqual(l.summary(), []);
+});
+
+// --- multi-face tracking ---
+
+const boxFace = (x, y, s = 0.2) => ({ box: { x, y, w: s, h: s } });
+
+test('FaceTracker keeps an identity when the detector reorders faces', () => {
+  const tr = new FaceTracker();
+  const a = tr.update([boxFace(0.1, 0.1, 0.3), boxFace(0.6, 0.1, 0.2)], 0);
+  assert.deepEqual(a.map((f) => f.id), [1, 2]);
+  assert.deepEqual(a.map((f) => f.primary), [true, false]);
+
+  // Same two people, emitted in the other order: ids must follow the face, not the position in the list.
+  const b = tr.update([boxFace(0.6, 0.1, 0.2), boxFace(0.1, 0.1, 0.3)], 100);
+  assert.deepEqual(b.map((f) => f.id), [2, 1]);
+  assert.equal(b[0].primary, true, 'primary is whichever the caller listed first');
+});
+
+test('FaceTracker follows a face that moves', () => {
+  const tr = new FaceTracker();
+  tr.update([boxFace(0.1, 0.1)], 0);
+  const moved = tr.update([boxFace(0.16, 0.14)], 100);
+  assert.equal(moved[0].id, 1);
+});
+
+test('FaceTracker issues a new identity after a long absence', () => {
+  const tr = new FaceTracker();
+  tr.update([boxFace(0.1, 0.1)], 0);
+  assert.equal(tr.update([boxFace(0.1, 0.1)], 5000)[0].id, 2);
+});
+
+test('FaceTracker gives separate people separate identities', () => {
+  const tr = new FaceTracker();
+  const r = tr.update([boxFace(0.05, 0.05), boxFace(0.7, 0.7)], 0);
+  assert.equal(new Set(r.map((f) => f.id)).size, 2);
 });

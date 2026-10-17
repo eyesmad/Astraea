@@ -76,6 +76,66 @@ export function computeTrust(active, markerStrength = 0) {
   return Math.max(0, Math.min(1, trust));
 }
 
+// Evidence seen so far in the call, not just what is firing right now.
+//
+// A caller who looked synthetic for twenty seconds should not read as trustworthy the moment the signal
+// stops: whoever was on the line is still the person you were talking to. Each signal keeps a score that
+// accumulates while it fires (repeated evidence compounds rather than only counting the worst moment) and
+// decays with a half-life afterwards, so one glitch fades but sustained evidence does not.
+export const EVIDENCE_HALF_LIFE_MS = 120000;
+const ACCRUAL = 0.35; // share of a signal's severity taken in per second of firing
+
+export class TrustLedger {
+  constructor({ halfLifeMs = EVIDENCE_HALF_LIFE_MS } = {}) {
+    this.halfLifeMs = halfLifeMs;
+    this.reset();
+  }
+
+  reset() {
+    this.evidence = new Map(); // id -> { score, peak, firstT, lastT, seconds }
+    this.last = null;
+  }
+
+  // Call once per tick with everything currently firing.
+  observe(active, now) {
+    const dt = this.last == null ? 0 : Math.max(0, now - this.last);
+    this.last = now;
+    const decay = dt ? 0.5 ** (dt / this.halfLifeMs) : 1;
+
+    for (const e of this.evidence.values()) e.score *= decay;
+
+    for (const { id, severity } of active) {
+      if (!SIGNALS[id]) continue;
+      const e = this.evidence.get(id) || { score: 0, peak: 0, firstT: now, lastT: now, seconds: 0 };
+      // Noisy-or accrual: each second of firing adds evidence without ever exceeding certainty.
+      const gain = severity * ACCRUAL * (dt ? Math.min(dt, 4000) / 1000 : 1);
+      e.score = 1 - (1 - e.score) * (1 - Math.min(1, gain));
+      e.peak = Math.max(e.peak, severity);
+      e.lastT = now;
+      e.seconds += dt / 1000;
+      this.evidence.set(id, e);
+    }
+    for (const [id, e] of this.evidence) if (e.score < 0.005) this.evidence.delete(id);
+  }
+
+  // Standing signals (metadata, content) are facts about the call, so they apply at full weight directly.
+  trust(standing = []) {
+    let miss = 1;
+    for (const [id, e] of this.evidence) miss *= 1 - SIGNALS[id].weight * e.score;
+    for (const { id, severity } of standing) {
+      if (SIGNALS[id]) miss *= 1 - SIGNALS[id].weight * severity;
+    }
+    return Math.max(0, Math.min(1, miss));
+  }
+
+  // Strongest accumulated evidence first, for explaining the score.
+  summary() {
+    return [...this.evidence.entries()]
+      .map(([id, e]) => ({ id, ...e, contribution: SIGNALS[id].weight * e.score }))
+      .sort((a, b) => b.contribution - a.contribution);
+  }
+}
+
 export function trustLabel(trust) {
   if (trust >= 0.7) return { key: 'ok', text: 'Looks authentic' };
   if (trust >= 0.45) return { key: 'warn', text: 'Be cautious' };

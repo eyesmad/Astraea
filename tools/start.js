@@ -3,14 +3,9 @@
 // This exists because `node server.js & python ...` only backgrounds the first command on POSIX shells; on
 // Windows npm runs scripts through cmd.exe, where `&` is sequential, so the Python half never started.
 import { spawn } from 'node:child_process';
-import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { pythonPath, root } from './python.js';
 
-const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const win = process.platform === 'win32';
-const venv = path.join(root, 'venv', win ? 'Scripts/python.exe' : 'bin/python3');
-const python = process.env.PYTHON || (fs.existsSync(venv) ? venv : win ? 'python' : 'python3');
+const python = pythonPath();
 const watch = process.argv.includes('--watch');
 
 const children = [];

@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node tools/start.js",
     "dev": "node tools/start.js --watch",
-    "test": "node --test test/",
+    "test": "node --test test/ && node tools/test-python.js",
+    "test:js": "node --test test/",
+    "test:py": "node tools/test-python.js",
     "replay": "node tools/replay.js"
   },
   "repository": {

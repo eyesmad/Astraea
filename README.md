@@ -8,6 +8,7 @@ Real-time deepfake and scam-call detector (proof of concept web app, desktop bro
 
 ```bash
 npm install
+python -m venv venv && venv/Scripts/pip install -r server/requirements.txt   # venv/bin/pip on macOS and Linux
 cp .env.example .env   # optional: add IPQS_API_KEY / GEMINI_API_KEY
 npm start
 ```
@@ -18,17 +19,22 @@ npm start
 |------|------|----------|
 | 3000 | Web app and HTTP API (`http://localhost:3000`) | `PORT` |
 | 3001 | WebSocket relay (`ws://localhost:3001`), rebroadcasts each message to the other clients | `WSS_PORT` |
+| 3002 | Python analysis server, reached through the proxy rather than directly | - |
 
 Both bind locally; the HTTP server listens on 127.0.0.1 only.
 
-The HTTP port also serves `ws://localhost:3000/ws/analyze` (same-origin only). During capture the browser streams 32 kHz PCM
-and compact face landmarks there; the server computes the audio heuristics (pitch, spectral cliff, breath coupling), face
-metrics (blink, jitter, expression) and lip-sync lag, and returns signals once a second. MediaPipe itself still runs in the
-browser because it needs the video frames. If the socket cannot be reached the app falls back to analysing in the browser.
+`npm start` runs both halves: the Node web server, and the Python analysis server on port 3002 that it proxies
+`ws://localhost:3000/ws/analyze` to. During capture the browser streams 32 kHz PCM and compact face landmarks there; the
+analysis server computes the voice heuristics (pitch, spectral cliff, breath coupling), face metrics (blink, jitter,
+expression) and lip-sync lag, and returns signals once a second. MediaPipe runs in the browser because it needs the video
+frames. If the socket cannot be reached the app falls back to analysing in the browser and says so in the overlay.
+
+The heuristics exist twice: `server/analysis/` (Python) is what runs, and `public/js/*.js` is the reference the browser
+fallback and the replay tooling use. Both are tested with the same expected values, so they cannot quietly drift apart.
 
 ## Test
 
-Automated (unit tests, including the server-side analysis session and its WebSocket):
+Automated, covering both halves (`npm run test:js` and `npm run test:py` run them separately):
 
 ```bash
 npm test
@@ -44,19 +50,29 @@ Manual:
 
 WebSocket relay: connect two clients to `ws://localhost:3001`; a message sent by one arrives at the other.
 
+## What the overlay shows
+
+Every face in the shared video gets a marker: solid brackets on the one the metrics follow (the largest), dashed brackets
+labelled "not analysed" on the rest, so it is clear who the score is about when more than one person is on screen.
+
+The trust score is cumulative. Evidence accumulates while a signal fires and decays with a two-minute half-life
+afterwards, rather than only reflecting the current window: a caller who looked synthetic for twenty seconds should not
+read as trustworthy the moment the signal stops. The line under the score says whether the evidence is current ("Now:")
+or remembered ("Earlier:").
+
 ## Optional voice model
 
 A voice-deepfake model can run alongside the heuristics as the `VOICE_MODEL` signal. It is off by default and
 is never required: if Python or the weights are missing, the signal is simply absent.
 
 ```bash
-python -m venv .venv-voice && .venv-voice/Scripts/pip install -r tools/requirements-voice-model.txt
-VOICE_MODEL=1 VOICE_MODEL_PYTHON=.venv-voice/Scripts/python npm start
+venv/Scripts/pip install -r tools/requirements-voice-model.txt
+VOICE_MODEL=1 npm start
 ```
 
-The server starts the model at boot, since loading it takes a couple of minutes (the first run also downloads
-about 1.2 GB of weights). It scores a 4-second window every few seconds on a background process, so capture is
-never blocked, and fires only when the median of at least 3 windows passes the threshold.
+It loads on a worker thread at first use, which takes a couple of minutes (the first run also downloads about 1.2 GB of
+weights). It scores a 4-second window every few seconds off the event loop, so capture is never blocked, and fires only
+when the median of at least 3 windows passes the threshold.
 
 Measured on 210 clips, [pellav2](https://huggingface.co/Sadanie/pellav2-audio-deepfake-detector) scored 0.980
 AUC on phone-quality audio, the best of the three models tested. Treat that number with suspicion: the upload
@@ -77,8 +93,6 @@ node tools/replay.js recordings/genuine-2026-10-17.ndjson   # one capture, with 
 npm run replay -- --summary                                  # every recording, grouped by label
 npm run replay -- --summary --json                           # machine-readable
 ```
-
-Set `VOICE_MODEL=1` on a replay too, to measure the model against the same recordings.
 
 Replay reconstructs the same analysis session the live socket built and drives it from the recorded clock, so
 it needs no camera and always produces the same result. On a capture labelled `genuine`, every tick a signal
