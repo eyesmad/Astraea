@@ -1,9 +1,9 @@
 // WebSocket endpoint /ws/analyze on the HTTP port: the browser streams audio and face frames, the server
 // streams back the evaluated signals once a second.
 import { WebSocketServer } from 'ws';
-import { AnalysisSession } from './analysis.js';
+import { SAMPLE_RATES, sessionFor } from './analysis.js';
+import { RecordingWriter, decodeAudioChunk, recordingPath } from './recording.js';
 
-const SAMPLE_RATES = new Set([16000, 32000, 44100, 48000]);
 const MAX_CHUNK_SAMPLES = 48000;
 
 export function attachAnalysis(httpServer, port) {
@@ -23,9 +23,15 @@ export function attachAnalysis(httpServer, port) {
   });
 
   wss.on('connection', (ws) => {
-    let session = new AnalysisSession();
+    let session = sessionFor(32000);
+    let recorder = null;
     const send = (obj) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(obj));
     const timer = setInterval(() => send({ type: 'signals', results: session.evaluate(), probes: session.probes(), frames: session.frames }), 1000);
+    const stop = () => {
+      clearInterval(timer);
+      recorder?.close();
+      recorder = null;
+    };
 
     ws.on('message', (data, isBinary) => {
       try {
@@ -33,18 +39,25 @@ export function attachAnalysis(httpServer, port) {
           const buf = Buffer.isBuffer(data) ? data : Buffer.concat(data);
           const n = (buf.length - 8) >> 1;
           if (n <= 0 || n > MAX_CHUNK_SAMPLES) return;
-          const samples = new Float32Array(n);
-          for (let i = 0; i < n; i++) samples[i] = buf.readInt16LE(8 + 2 * i) / 32768;
-          const endT = buf.readDoubleLE(0);
-          if (Number.isFinite(endT)) session.pushAudio(samples, endT);
+          const chunk = decodeAudioChunk(buf);
+          if (!chunk) return;
+          session.pushAudio(chunk.samples, chunk.endT);
+          recorder?.audio(buf);
           return;
         }
         const msg = JSON.parse(data.toString());
         if (msg.type === 'config' && SAMPLE_RATES.has(msg.sampleRate)) {
-          session = new AnalysisSession({ sampleRate: msg.sampleRate, fftSize: msg.sampleRate > 24000 ? 2048 : 1024 });
-          send({ type: 'ready' });
+          session = sessionFor(msg.sampleRate);
+          recorder?.close();
+          recorder = null;
+          if (msg.record) {
+            const file = recordingPath(msg.record);
+            recorder = new RecordingWriter(file, { sampleRate: msg.sampleRate, label: msg.record, note: typeof msg.note === 'string' ? msg.note.slice(0, 500) : '' });
+            console.log(`Recording capture to ${file}`);
+          }
+          send({ type: 'ready', recording: Boolean(recorder) });
         } else if (msg.type === 'face' && Number.isFinite(msg.t)) {
-          session.pushFace(msg.t, msg.p);
+          if (session.pushFace(msg.t, msg.p)) recorder?.face(msg.t, msg.p);
         } else if (msg.type === 'reset') {
           session.reset();
         }
@@ -52,8 +65,8 @@ export function attachAnalysis(httpServer, port) {
         send({ type: 'error', message: err.message });
       }
     });
-    ws.on('close', () => clearInterval(timer));
-    ws.on('error', () => clearInterval(timer));
+    ws.on('close', stop);
+    ws.on('error', stop);
   });
   return wss;
 }

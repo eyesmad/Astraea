@@ -3,6 +3,13 @@ import { packFace } from './wire.js';
 
 const SAMPLE_RATE = 32000;
 
+// ?record=genuine or ?record=fake asks the server to save the capture for later replay. Labelled captures
+// are what the thresholds get calibrated against, so the label matters more than the filename.
+function recordLabel() {
+  const v = new URLSearchParams(location.search).get('record');
+  return v === '' ? 'capture' : v;
+}
+
 export class RemoteAnalysis {
   constructor({ onSignals, onClose } = {}) {
     this.onSignals = onSignals;
@@ -11,6 +18,7 @@ export class RemoteAnalysis {
     this.ctx = null;
     this.frames = 0;
     this.probes = null;
+    this.recording = false;
   }
 
   get active() {
@@ -27,12 +35,15 @@ export class RemoteAnalysis {
         const timeout = setTimeout(() => { done(false); ws.close(); }, 3000);
         ws.onopen = () => {
           clearTimeout(timeout);
-          ws.send(JSON.stringify({ type: 'config', sampleRate: SAMPLE_RATE }));
+          const record = recordLabel();
+          ws.send(JSON.stringify({ type: 'config', sampleRate: SAMPLE_RATE, ...(record ? { record } : {}) }));
           done(true);
         };
         ws.onmessage = (e) => {
           const m = JSON.parse(e.data);
-          if (m.type === 'signals') {
+          if (m.type === 'ready') {
+            this.recording = Boolean(m.recording);
+          } else if (m.type === 'signals') {
             this.frames = m.frames;
             this.probes = m.probes;
             this.onSignals?.(m.results);
@@ -85,5 +96,6 @@ export class RemoteAnalysis {
     if (ws) { ws.onclose = null; ws.close(); }
     this.frames = 0;
     this.probes = null;
+    this.recording = false;
   }
 }

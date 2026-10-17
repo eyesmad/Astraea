@@ -7,6 +7,15 @@ import { VideoMetrics, mouthAperture } from '../public/js/videoMetrics.js';
 import { unpackFace } from '../public/js/wire.js';
 import { spectrumDb } from './dsp.js';
 
+export const SAMPLE_RATES = new Set([16000, 32000, 44100, 48000]);
+
+// Single place that maps a capture rate to session settings, so a replay reconstructs exactly the session
+// the live socket built for that recording.
+export function sessionFor(sampleRate) {
+  const sr = SAMPLE_RATES.has(sampleRate) ? sampleRate : 32000;
+  return new AnalysisSession({ sampleRate: sr, fftSize: sr > 24000 ? 2048 : 1024 });
+}
+
 export class AnalysisSession {
   constructor({ sampleRate = 32000, fftSize = 2048, hopMs = 20 } = {}) {
     this.sr = sampleRate;

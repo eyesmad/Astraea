@@ -112,7 +112,9 @@ function render(now) {
   engine.hidden = !stream;
   if (stream) {
     engine.className = `engine ${remote.active ? '' : 'local'}`;
-    engine.textContent = remote.active ? 'Analysing on the server' : 'Analysing in this browser';
+    engine.textContent = remote.active
+      ? `Analysing on the server${remote.recording ? ' and recording for replay' : ''}`
+      : 'Analysing in this browser';
   }
   $('#groups').innerHTML = Object.entries(LAYERS).map(([layer, meta]) => {
     const rows = Object.entries(SIGNALS).filter(([, d]) => d.layer === layer).map(([id, def]) => {

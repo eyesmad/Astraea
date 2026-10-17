@@ -7,7 +7,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test test/"
+    "test": "node --test test/",
+    "replay": "node tools/replay.js"
   },
   "repository": {
     "type": "git",

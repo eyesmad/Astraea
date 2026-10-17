@@ -44,8 +44,30 @@ Manual:
 
 WebSocket relay: connect two clients to `ws://localhost:3001`; a message sent by one arrives at the other.
 
+## Record and replay
+
+Thresholds are tuned against recorded calls rather than guesses. Add `?record=<label>` to the URL and start a
+capture: the server writes everything the browser streams (audio chunks and face landmarks) to
+`recordings/<label>-<timestamp>.ndjson`. Use `genuine` for a real person and `fake` for a known deepfake, since
+the summary groups by those two labels.
+
+```bash
+node tools/replay.js recordings/genuine-2026-10-17.ndjson   # one capture, with a timeline
+npm run replay -- --summary                                  # every recording, grouped by label
+npm run replay -- --summary --json                           # machine-readable
+```
+
+Replay reconstructs the same analysis session the live socket built and drives it from the recorded clock, so
+it needs no camera and always produces the same result. On a capture labelled `genuine`, every tick a signal
+fires is a false positive; that percentage is the number to tune against. `recordings/` is gitignored, since
+captures contain real faces and voices.
+
 ## Caveats
 
 - Detection thresholds are untuned proof-of-concept values.
 - STIR/SHAKEN cannot be read in a browser; it comes from the Twilio webhook (`POST /api/webhook/twilio`) or the demo scenarios.
 - Speech-to-text only hears the microphone, not the caller.
+- Content classification runs through Gemini when `GEMINI_API_KEY` is set. Since b137f6f that path no longer
+  clamps model output into the result schema, so its `red_flags` are plain strings (the overlay expects
+  `{tactic, quote, why}` and renders them blank), `category` is always `other_scam`, and an API failure
+  returns nothing instead of falling back. The offline keyword classifier is unaffected.

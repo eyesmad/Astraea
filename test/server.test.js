@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { analyzeMetadata, parseVerstat, areaCodeInfo } from '../server/metadata.js';
-import { classifyHeuristic, classify, normalizeResult } from '../server/scam.js';
+import { classifyHeuristic, classify } from '../server/scam.js';
 import { SCENARIOS } from '../server/scenarios.js';
 
 const byId = (r) => Object.fromEntries(r.signals.map((s) => [s.id, s]));
@@ -68,9 +68,5 @@ test('classify falls back offline without an API key and rejects empty input', a
   await assert.rejects(() => classify('  ', '', {}), /empty/i);
 });
 
-test('normalizeResult clamps model output into the schema', () => {
-  const r = normalizeResult({ category: 'made_up', confidence: 7, red_flags: [{ tactic: 'urgency' }] }, 'claude');
-  assert.equal(r.category, 'other_scam');
-  assert.equal(r.confidence, 1);
-  assert.equal(r.red_flags[0].quote, '');
-});
+// The normalizeResult test was dropped in b137f6f, which removed the function when the model backend moved
+// to Gemini. Model output is no longer clamped into the schema; see the note in the README.
